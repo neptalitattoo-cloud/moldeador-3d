@@ -572,7 +572,7 @@ html.editing body {
 }
 .ed-panel {
   background: #1d1b1a;
-  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  padding: 8px 10px; /* el margen inferior del iPhone ya lo pone .editor */
 }
 .ed-panel > div {
   display: flex;
@@ -595,4 +595,22 @@ html.editing body {
   border-radius: 50%;
   border: 2px solid #fff;
   box-shadow: 0 0 0 1px #000;
+}
+
+/* v9: foco visible en los botones de foto, lienzo del editor sin selección/lupa del sistema, nota de cada recorte */
+.btnfile:focus-within {
+  outline: 3px solid var(--acc);
+  outline-offset: 2px;
+}
+.ed-stage canvas {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.decal .g-note {
+  grid-column: 1 / -1;
+  color: #ffc400;
+}
+.decal .g-note:empty {
+  display: none;
 }

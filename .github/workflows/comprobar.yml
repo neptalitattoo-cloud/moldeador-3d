@@ -28,13 +28,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { fetch-depth: 2 } # para comparar con el commit anterior
+        with: { fetch-depth: 0 } # para comparar con el estado anterior al push (aunque traiga varios commits)
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - name: Versión de caché coherente y hash de archivos al día
         run: python3 herramientas/version_sw.py --check
-      - name: Si cambió un archivo precacheado respecto al commit anterior, la versión tiene que subir
-        run: python3 herramientas/version_sw.py --check-git HEAD~1
+      - name: Si cambió un archivo precacheado respecto a antes del push, la versión tiene que subir
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          REF=HEAD~1
+          if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] \
+             && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then REF="$BEFORE"; fi
+          echo "Comparando con $REF"
+          python3 herramientas/version_sw.py --check-git "$REF"
       - name: El hash de la CSP coincide con el importmap
         run: python3 herramientas/check_csp.py
       - run: node --test tests/fit.test.mjs tests/foto.test.mjs

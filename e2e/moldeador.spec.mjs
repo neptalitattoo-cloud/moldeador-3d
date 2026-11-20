@@ -278,13 +278,23 @@ test('foto del brazo: cuentagotas → tono, recorte con lazo, colocar a X cm y m
   const tono = await page.inputValue('#tono');
   const rgb = [1, 3, 5].map(k => parseInt(tono.slice(k, k + 2), 16));
   [200, 152, 122].forEach((v, k) => expect(Math.abs(rgb[k] - v)).toBeLessThan(6));
-  // 2) lazo alrededor del tatuaje (rectángulo 200–400 × 250–500 de la imagen)
+  // 2) lazo exactamente por el borde del tatuaje (rectángulo 200–400 × 250–500 de la imagen: 200 × 250 px)
   await page.click('#edTools button[data-t="lazo"]');
   const pts = [];
-  for (let k = 0; k <= 32; k++) {
-    const a = (k / 32) * 2 * Math.PI;
-    pts.push([300 + 125 * Math.cos(a), 375 + 150 * Math.sin(a)]);
-  }
+  const esquinas = [
+    [200, 250],
+    [400, 250],
+    [400, 500],
+    [200, 500],
+    [200, 250],
+  ];
+  for (let c = 0; c < 4; c++)
+    for (let k = 0; k < 8; k++) {
+      const [x0, y0] = esquinas[c],
+        [x1, y1] = esquinas[c + 1];
+      pts.push([x0 + ((x1 - x0) * k) / 8, y0 + ((y1 - y0) * k) / 8]);
+    }
+  pts.push(esquinas[0]);
   [cx, cy] = await en(...pts[0]);
   await page.mouse.move(cx, cy);
   await page.mouse.down();
@@ -293,37 +303,145 @@ test('foto del brazo: cuentagotas → tono, recorte con lazo, colocar a X cm y m
     await page.mouse.move(cx, cy);
   }
   await page.mouse.up();
-  await page.fill('#edAlto', '10');
+  await page.fill('#edAlto', '10'); // alto de lo rodeado ⇒ ancho = 200/250 × 10 = 8 cm
   await page.click('#edRecortar');
+  await expect(page.locator('#edAlto')).toHaveValue(''); // sin calibrar, el alto no se arrastra al siguiente recorte
   await page.click('#edListo');
   await expect(page.locator('#editor')).toBeHidden();
   await expect(page.locator('#decals .decal')).toHaveCount(1);
-  // 3) colocar el centro a 20 cm del hombro, por fuera
-  await page.fill('#decals .dd', '20');
-  await page.waitForTimeout(300);
+  // 3) colocar el centro a 38 cm del hombro, por fuera
+  await page.evaluate(() => (window.__antes = window.__result));
+  await page.fill('#decals .dd', '38');
+  await page.locator('#decals .dd').press('Enter');
+  await page.waitForTimeout(600);
+  expect(await page.evaluate(() => window.__result === window.__antes)).toBe(true); // Intro no vuelve a moldear
   const px = await page.evaluate(() => ({
-    centro: window.__tatPixel(...window.__cmToUV(20, 0)),
-    lejos: window.__tatPixel(...window.__cmToUV(45, 0)),
-    otroLado: window.__tatPixel(...window.__cmToUV(20, 180)),
+    centro: window.__tatPixel(...window.__cmToUV(38, 0)),
+    lejos: window.__tatPixel(...window.__cmToUV(20, 0)),
+    otroLado: window.__tatPixel(...window.__cmToUV(38, 180)),
   }));
   expect(px.centro[3]).toBeGreaterThan(200);
   expect(px.lejos[3]).toBe(0);
   expect(px.otroLado[3]).toBe(0);
-  // la banda del tatuaje aparece en la guía de tatuajes existentes (sin conflicto con la lista)
-  expect(await page.inputValue('#decals .dd')).toBe('20');
-  // 4) mover en 2D: arrastrar hacia abajo en la vista plana aleja el tatuaje del hombro
+  // cm reales: lo pintado mide 8 × 10 cm sobre la malla ajustada (±3 %)
+  const med = await page.evaluate(() => window.__medirRecorte(0));
+  console.log(`e2e cm reales: ancho ${med.ancho.toFixed(2)} cm (8), alto ${med.alto.toFixed(2)} cm (10)`);
+  expect(Math.abs(med.ancho - 8)).toBeLessThan(0.24);
+  expect(Math.abs(med.alto - 10)).toBeLessThan(0.3);
+  // sin espejo: la marca roja está arriba a la DERECHA del dibujo (x +2,3 cm, y −3,1 cm), y a la izquierda no
+  const roja = await page.evaluate(() => [window.__recortePixel(0, 2.3, -3.1), window.__recortePixel(0, -2.3, -3.1)]);
+  expect(roja[0][0]).toBeGreaterThan(170);
+  expect(roja[0][1]).toBeLessThan(110);
+  expect(roja[1][0]).toBeLessThan(110);
+  // la guía azul del recorte existe en la capa de guías
+  const guia = await page.evaluate(() => window.__guiaRecorte(0));
+  expect(guia.tramos).toBeGreaterThan(40);
+  expect(guia.azul).toBeGreaterThan(0);
+  // 4) mover en 2D: lo agarrado sigue al dedo (dirección y cantidad)
   await page.click('#decals .mover');
   await expect(page.locator('#btn2D')).toHaveAttribute('aria-pressed', 'true');
-  const box = await page.locator('canvas.v2d').boundingBox();
+  await page.waitForTimeout(300);
   const d0 = await page.evaluate(() => window.__decals()[0].d);
-  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  const [sx, sy] = await page.evaluate(() => window.__recorteEnPantalla(0, 0, 0));
+  await page.mouse.move(sx, sy);
   await page.mouse.down();
-  for (let k = 1; k <= 5; k++) await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 8 * k);
+  for (let k = 1; k <= 6; k++) await page.mouse.move(sx + 3 * k, sy + 6 * k);
   await page.mouse.up();
+  await page.waitForTimeout(300);
+  const [ex, ey] = await page.evaluate(() => window.__recorteEnPantalla(0, 0, 0));
+  console.log(
+    `e2e arrastre: dedo (+18, +36) px, centro del recorte (${(ex - sx).toFixed(1)}, ${(ey - sy).toFixed(1)}) px`,
+  );
+  expect(Math.hypot(ex - sx - 18, ey - sy - 36)).toBeLessThan(4);
   const d1 = await page.evaluate(() => window.__decals()[0].d);
-  expect(Math.abs(d1 - d0)).toBeGreaterThan(0.5);
-  // tono guardado para la próxima vez
-  expect(await page.evaluate(() => localStorage.getItem('moldeador.tono'))).toBe(tono);
+  expect(d1).not.toBe(d0);
+  // un arrastre que empieza fuera del recorte mueve la vista, no el recorte
+  const box = await page.locator('canvas.v2d').boundingBox();
+  const antes = await page.evaluate(() => ({ ...window.__decals()[0], tx: window.__v2d.v.tx }));
+  await page.mouse.move(box.x + 12, box.y + box.height - 12);
+  await page.mouse.down();
+  await page.mouse.move(box.x + 52, box.y + box.height - 12, { steps: 4 });
+  await page.mouse.up();
+  const despues = await page.evaluate(() => ({ ...window.__decals()[0], tx: window.__v2d.v.tx }));
+  expect([despues.d, despues.ang]).toEqual([antes.d, antes.ang]);
+  expect(despues.tx - antes.tx).toBeCloseTo(40, 0);
+  // pellizco con dos dedos (táctil) sobre el recorte: separarlos agranda, girarlos gira hacia el mismo lado
+  const pin = await page.evaluate(async () => {
+    const cv = document.querySelector('canvas.v2d'),
+      [x, y] = window.__recorteEnPantalla(0, 0, 0);
+    const ev = (t, id, px, py) =>
+      cv.dispatchEvent(
+        new PointerEvent(t, { pointerId: id, clientX: px, clientY: py, pointerType: 'touch', bubbles: true }),
+      );
+    const a0 = window.__decals()[0].alto,
+      r0 = window.__decals()[0].rot;
+    ev('pointerdown', 11, x - 20, y);
+    ev('pointerdown', 12, x + 20, y);
+    for (let k = 1; k <= 5; k++) {
+      const R = 20 + 4 * k,
+        t = (k * 3 * Math.PI) / 180; // gira 15° en el sentido de las agujas del reloj (pantalla)
+      ev('pointermove', 11, x - R * Math.cos(t), y - R * Math.sin(t));
+      ev('pointermove', 12, x + R * Math.cos(t), y + R * Math.sin(t));
+    }
+    ev('pointerup', 11, x, y);
+    ev('pointerup', 12, x, y);
+    await new Promise(r => setTimeout(r, 300));
+    const d = window.__decals()[0];
+    return { escala: d.alto / a0, giro: d.rot - r0 };
+  });
+  expect(pin.escala).toBeGreaterThan(1.3);
+  expect(Math.abs(pin.giro)).toBeGreaterThan(5);
+  // 5) tono sólo para esta sesión (el siguiente cliente empieza con piel neutra)
+  expect(await page.evaluate(() => sessionStorage.getItem('moldeador.tono'))).toBe(tono);
+  expect(await page.evaluate(() => localStorage.getItem('moldeador.tono'))).toBe(null);
+  // 6) quitar el recorte libera su lienzo
+  await page.click('#decals .decal button[aria-label^="Quitar"]');
+  await expect(page.locator('#decals .decal')).toHaveCount(0);
+  expect(errs).toEqual([]);
+});
+
+test('foto JPEG con EXIF «girada 90°» (Orientation = 6): el editor la ve derecha', async ({ page }) => {
+  const errs = vigilarErrores(page);
+  await page.goto(S.url + '?debug');
+  await lista(page);
+  // JPEG 60 × 40 (izquierda roja, derecha azul) hecho por el propio navegador
+  const b64 = await page.evaluate(() => {
+    const c = document.createElement('canvas');
+    c.width = 60;
+    c.height = 40;
+    const g = c.getContext('2d');
+    g.fillStyle = '#e00000';
+    g.fillRect(0, 0, 30, 40);
+    g.fillStyle = '#0000e0';
+    g.fillRect(30, 0, 30, 40);
+    return c.toDataURL('image/jpeg', 0.95).split(',')[1];
+  });
+  const jpg = Buffer.from(b64, 'base64');
+  // segmento APP1 Exif con Orientation = 6 (girar 90° a la derecha al mostrar), justo tras SOI
+  const tiff = Buffer.from([
+    0x4d, 0x4d, 0, 0x2a, 0, 0, 0, 8, 0, 1, 0x01, 0x12, 0, 3, 0, 0, 0, 1, 0, 6, 0, 0, 0, 0, 0, 0,
+  ]);
+  const body = Buffer.concat([Buffer.from('Exif\0\0', 'latin1'), tiff]);
+  const app1 = Buffer.concat([Buffer.from([0xff, 0xe1, (body.length + 2) >> 8, (body.length + 2) & 255]), body]);
+  const foto = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'exif-')), 'girada.jpg');
+  fs.writeFileSync(foto, Buffer.concat([jpg.subarray(0, 2), app1, jpg.subarray(2)]));
+  await page.setInputFiles('#fotoGal', foto);
+  await expect(page.locator('#editor')).toBeVisible();
+  const r = await page.evaluate(() => {
+    const s = window.__editor.src,
+      g = s.getContext('2d'),
+      p = (x, y) => Array.from(g.getImageData(x, y, 1, 1).data);
+    return { w: s.width, h: s.height, arriba: p(20, 10), abajo: p(20, 50) };
+  });
+  expect([r.w, r.h]).toEqual([40, 60]);
+  expect(r.arriba[0]).toBeGreaterThan(150); // lo que era la izquierda (rojo) queda arriba
+  expect(r.abajo[2]).toBeGreaterThan(150);
+  // el foco entra en el editor y vuelve al cerrar
+  expect(await page.evaluate(() => !!document.activeElement.closest('#editor'))).toBe(true);
+  expect(await page.evaluate(() => document.querySelector('main').inert)).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#editor')).toBeHidden();
+  expect(await page.evaluate(() => document.querySelector('main').inert)).toBe(false);
   expect(errs).toEqual([]);
 });
 

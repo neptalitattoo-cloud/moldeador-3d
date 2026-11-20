@@ -1,6 +1,6 @@
 // Editor «Foto del brazo»: cuentagotas (tono de piel), recortar tatuajes con lazo y borde suave, medir (calibración).
 // Táctil (iPad/iPhone) y ratón. Dos dedos o la rueda: mover/acercar la foto.
-import { averageColor, blurAlpha } from './foto.js?v=8';
+import { averageColor, blurAlpha, altoFromCalib } from './foto.js?v=9';
 
 const $ = id => document.getElementById(id);
 const MAX_PHOTO = 2048; // px del lado mayor (memoria en iOS)
@@ -24,25 +24,37 @@ export class FotoEditor {
     this._wire();
   }
   // ---------- abrir / cerrar ----------
+  // img: foto nueva (Image) o this.src (volver al editor con la misma foto, ya reducida: sin decodificar otra vez)
   open(img) {
-    const [w, h] = fit(img.naturalWidth || img.width, img.naturalHeight || img.height, MAX_PHOTO);
-    if (!this.src) this.src = document.createElement('canvas');
-    this.src.width = w;
-    this.src.height = h;
+    const same = img === this.src;
+    if (!same) {
+      const [w, h] = fit(img.naturalWidth || img.width, img.naturalHeight || img.height, MAX_PHOTO);
+      const c = document.createElement('canvas');
+      c.width = w;
+      c.height = h;
+      c.getContext('2d', { willReadFrequently: true }).drawImage(img, 0, 0, w, h); // con la orientación EXIF aplicada
+      if (this.src) this.src.width = this.src.height = 0; // libera la foto anterior
+      this.src = c;
+      // foto nueva: calibración y alto, de cero (con la misma foto se conservan)
+      this.cmPerPx = this.line = null;
+      $('edMideCm').value = '';
+      $('edAlto').value = '';
+      $('edEscala').textContent = 'Sin calibrar: escribe el alto a mano.';
+    }
     const g = this.src.getContext('2d', { willReadFrequently: true });
-    g.drawImage(img, 0, 0, w, h);
-    this.data = g.getImageData(0, 0, w, h).data;
-    this.lasso = this.line = this.probe = null;
+    this.data = g.getImageData(0, 0, this.src.width, this.src.height).data;
+    this.lasso = this.probe = null;
     this.tone = null;
-    this.cmPerPx = null;
-    $('edEscala').textContent = 'Sin calibrar: escribe el alto a mano.';
     $('edUsarTono').disabled = true;
     $('edRecortar').disabled = true;
     $('edHex').textContent = 'Toca la piel en una zona con buena luz.';
     $('edSwatch').style.background = 'transparent';
+    this.opener = document.activeElement;
+    for (const el of document.querySelectorAll('header, main')) el.inert = true; // el foco no sale del editor
     this.root.hidden = false;
     document.documentElement.classList.add('editing');
     this.setTool('gotas');
+    this.root.querySelector('#edTools [aria-pressed="true"]').focus();
     requestAnimationFrame(() => {
       this._size();
       this.fit();
@@ -52,6 +64,14 @@ export class FotoEditor {
   close() {
     this.root.hidden = true;
     document.documentElement.classList.remove('editing');
+    for (const el of document.querySelectorAll('header, main')) el.inert = false;
+    // memoria (iOS): se suelta la imagen de pantalla y los píxeles; la foto reducida se guarda para «Volver al editor»
+    this.cv.width = this.cv.height = 0;
+    this.data = null;
+    this.probe = null;
+    const back =
+      this.opener && this.opener.isConnected && !this.opener.closest('#editor') ? this.opener : $('fotoEditar');
+    if (back && !back.hidden) back.focus();
   }
   get isOpen() {
     return !this.root.hidden;
@@ -145,7 +165,7 @@ export class FotoEditor {
       [vx, vy] = this.toView(ix, iy);
     const R = 48,
       Z = 4,
-      cx = vx,
+      cx = Math.min(this.cw - R - 8, Math.max(R + 8, vx)), // la lupa no se corta en los bordes
       cy = Math.max(R + 6, vy - R - 40);
     g.save();
     g.beginPath();
@@ -195,12 +215,17 @@ export class FotoEditor {
     }
     L.closed = true;
     const ys = L.pts.map(p => p[1]);
-    if (this.cmPerPx) $('edAlto').value = fmt((Math.max(...ys) - Math.min(...ys)) * this.cmPerPx);
+    L.hSrc = Math.max(...ys) - Math.min(...ys); // alto del trazo en px de la foto
+    this._altoFromCalib();
     this._refreshCut();
   }
   _refreshCut() {
     const alto = this.toCm($('edAlto').value);
     $('edRecortar').disabled = !(this.lasso && this.lasso.closed && alto > 0.5 && alto < 80);
+  }
+  _altoFromCalib() {
+    if (this.cmPerPx && this.lasso && this.lasso.closed)
+      $('edAlto').value = fmt(altoFromCalib(this.lasso.hSrc, this.cmPerPx));
   }
   _calib() {
     if (!this.line) return;
@@ -210,6 +235,8 @@ export class FotoEditor {
       this.cmPerPx = cm / px;
       $('edEscala').textContent =
         `Calibrado: 10 cm = ${Math.round(10 / this.cmPerPx)} px de la foto. El alto de los recortes se calcula solo.`;
+      this._altoFromCalib();
+      this._refreshCut();
     }
   }
   /** Recorte del lazo → canvas con transparencia (borde suave). */
@@ -253,7 +280,9 @@ export class FotoEditor {
     for (let i = 0; i < a.length; i++) id.data[4 * i + 3] = (id.data[4 * i + 3] * soft[i]) / 255;
     g.putImageData(id, 0, 0);
     m.width = m.height = 0;
-    return out;
+    const ys = pts.map(p => p[1]);
+    // el alto en cm se aplica al trazo (traceH, px del lienzo), no al lienzo con el margen del borde suave (H9)
+    return { canvas: out, traceH: (Math.max(...ys) - Math.min(...ys)) * k };
   }
   // ---------- eventos ----------
   _wire() {
@@ -273,7 +302,11 @@ export class FotoEditor {
       this.v.s = s2;
     };
     cv.addEventListener('pointerdown', e => {
-      cv.setPointerCapture(e.pointerId);
+      try {
+        cv.setPointerCapture(e.pointerId);
+      } catch {
+        // puntero ya suelto o sintético: se sigue sin captura
+      }
       P.set(e.pointerId, xy(e));
       last = null;
       if (P.size > 1) {
@@ -348,7 +381,13 @@ export class FotoEditor {
       this.draw();
     };
     cv.addEventListener('pointerup', up);
-    cv.addEventListener('pointercancel', up);
+    // gesto cancelado por el sistema (p. ej. pasada desde el borde en iOS): el trazo a medias no vale
+    cv.addEventListener('pointercancel', e => {
+      if (this.lasso && !this.lasso.closed) this.lasso = null;
+      if (this.tool === 'medir' && !this.cmPerPx) this.line = null;
+      panning = true; // no cerrar ni calibrar
+      up(e);
+    });
     cv.addEventListener(
       'wheel',
       e => {
@@ -386,10 +425,11 @@ export class FotoEditor {
       const alto = this.toCm($('edAlto').value);
       if (!(this.lasso && this.lasso.closed && alto > 0)) return;
       const feather = (+$('edBorde').value / 100) * Math.min(this.src.width, this.src.height) * 0.1;
-      const c = this.cut(feather);
-      this.onCut({ canvas: c, name: $('edNombre').value.trim(), alto });
+      const { canvas, traceH } = this.cut(feather);
+      this.onCut({ canvas, traceH, name: $('edNombre').value.trim(), alto });
       this.lasso = null;
       $('edNombre').value = '';
+      if (!this.cmPerPx) $('edAlto').value = ''; // el siguiente recorte no hereda el alto de este
       $('edRecortar').disabled = true;
       this.draw();
     };

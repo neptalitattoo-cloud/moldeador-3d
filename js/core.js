@@ -421,6 +421,10 @@ export function validateInputs(raw, labels = {}) {
     warn.push(
       `Ojo: 1 + 2 = ${(inp.hombro_codo + inp.codo_muneca).toFixed(1)} no cuadra con 3 = ${inp.hombro_muneca}; uso hombro→codo y hombro→muñeca.`,
     );
+  if (inp.c_nudillos != null && inp.c_muneca != null && inp.c_nudillos < 0.9 * inp.c_muneca)
+    warn.push('Ojo: el contorno de nudillos suele ser mayor que el de la muñeca: ¿has medido el ancho?');
+  if (inp.c_nudillos != null && inp.largo_mano != null && inp.c_nudillos / KNUCKLE_CIRC_K > 0.75 * inp.largo_mano)
+    warn.push('Ojo: mano muy ancha para ese largo: revisa 9 (largo) y 10 (contorno de nudillos).');
   if (inp.hombro_muneca - inp.hombro_codo < 10)
     throw new Error('El antebrazo sale demasiado corto: revisa los largos.');
   return { inp, warn };
@@ -528,7 +532,11 @@ export function fit(base, inp, log = () => {}) {
     brT = circHand / KNUCKLE_CIRC_K;
   } else {
     brT = KNUCKLE_W_K * HLt;
-    circHand = Math.max(KNUCKLE_CIRC_WRIST_K * inp.c_muneca, KNUCKLE_CIRC_MIN_K * brT);
+    // el valor automático tampoco sale del rango que se aceptaría escrito a mano
+    circHand = Math.min(
+      RANGOS.c_nudillos[1],
+      Math.max(RANGOS.c_nudillos[0], KNUCKLE_CIRC_WRIST_K * inp.c_muneca, KNUCKLE_CIRC_MIN_K * brT),
+    );
   }
   const tape0 = tapeFn(base, V0);
   const kn = { elO: m.s_tip - m.S_EL, wrO: m.s_tip - m.S_WR };

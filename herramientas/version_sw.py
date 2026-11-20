@@ -90,6 +90,10 @@ def escribir(raiz, n):
 
 def check(raiz):
     n = str(version_actual(raiz))
+    lista = {f.split('?')[0] for f in precacheados((raiz / 'sw.js').read_text(encoding='utf-8'))}
+    faltan = [f for f in con_version(raiz) if f.startswith('js/') and f not in lista]
+    if faltan:
+        sys.exit(f'Faltan en la lista FILES de sw.js (no funcionarían sin conexión): {", ".join(faltan)}')
     g, actual = guardado(raiz), huella(raiz)
     if g == [n, actual]:
         print(f'OK: versión {n}, hash {actual[:12]}')

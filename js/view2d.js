@@ -1,6 +1,6 @@
 // Vista 2D: (a) textura plana con capas y guías, (b) siluetas ortográficas del brazo ajustado con medidas.
 // Zoom con pellizco / rueda, arrastrar para mover, doble toque para encajar.
-import { dot, cross, norm } from './core.js?v=8';
+import { dot, cross, norm } from './core.js?v=9';
 const PINK = '#ff3d9a',
   PINK_D = '#d81b72',
   HI = '#ffc400',
@@ -84,15 +84,19 @@ export class View2D {
     }
   }
   invalidate(what) {
-    this._free(
+    // las capas viejas se siguen viendo hasta que se rehacen en el próximo fotograma (sin parpadeo ni huecos)
+    const keys =
       what === 'all'
         ? Object.keys(this.cache)
         : what === 'tex'
           ? ['tex', 'texG']
-          : what === 'guides'
-            ? ['texG', 'silG']
-            : [],
-    );
+          : what === 'texOnly'
+            ? ['tex']
+            : what === 'guides'
+              ? ['texG', 'silG']
+              : [];
+    if (!this.active) return this._free(keys);
+    this.stale = new Set([...(this.stale || []), ...keys]);
     this._schedule();
   }
   // un solo redibujado por frame aunque lleguen varias invalidaciones seguidas
@@ -101,16 +105,23 @@ export class View2D {
     this._raf = requestAnimationFrame(() => {
       this._raf = 0;
       if (!this.active) return;
-      this.ensure();
+      const stale = [...(this.stale || [])];
+      this.stale = null;
+      const keep = this.mode === 'tex' && stale.includes('tex') ? this.cache.tex : null;
+      for (const k of stale) if (k !== 'tex' || !keep) this._free([k]);
+      if (keep) delete this.cache.tex;
+      this.ensure(keep); // la capa de textura se repinta sobre el mismo canvas
       this.draw();
     });
   }
-  ensure() {
+  ensure(reuse = null) {
     const c = this.cache;
     if (this.mode === 'tex') {
-      if (!c.tex) c.tex = this.renderTex();
+      if (!c.tex) c.tex = this.renderTex(this.api.texSize(), reuse);
+      else if (reuse && reuse !== c.tex) reuse.width = reuse.height = 0;
       if (!c.texG) c.texG = this.renderTexGuides();
       this.layers = [c.tex, c.texG];
+      this.layerSize = [c.tex.width, c.tex.height];
       this.bg = '#2b2724';
     } else {
       this.lastCols = this._cols();
@@ -173,10 +184,24 @@ export class View2D {
       const r = cv.getBoundingClientRect();
       return [e.clientX - r.left, e.clientY - r.top];
     };
+    // «Mover en 2D»: el gesto es del recorte si el primer dedo empieza encima de él; si no, de la vista
+    let gesture = null;
+    const toUV = ([x, y]) => {
+      const [W, H] = this.layerSize || [1, 1];
+      return [(x - this.v.tx) / this.v.s / W, 1 - (y - this.v.ty) / this.v.s / H];
+    };
     cv.addEventListener('pointerdown', e => {
-      cv.setPointerCapture(e.pointerId);
+      try {
+        cv.setPointerCapture(e.pointerId);
+      } catch {
+        // puntero ya suelto o sintético: se sigue sin captura
+      }
       P.set(e.pointerId, xy(e));
       last = null;
+      if (P.size === 1) {
+        const editing = this.editHook && this.editHook.active();
+        gesture = editing && this.editHook.grab(...toUV(xy(e))) ? 'decal' : 'view';
+      }
     });
     cv.addEventListener('pointermove', e => {
       if (!P.has(e.pointerId)) return;
@@ -184,24 +209,20 @@ export class View2D {
         cur = xy(e);
       P.set(e.pointerId, cur);
       moved += Math.hypot(cur[0] - prev[0], cur[1] - prev[1]);
-      const editing = this.editHook && this.editHook.active();
-      if (P.size === 1 && editing) {
-        // modo «Mover en 2D»: un dedo/ratón mueve el tatuaje (en píxeles de la capa)
-        const L = this.layers[0];
-        if (L && L.width)
-          this.editHook.drag((cur[0] - prev[0]) / this.v.s, (cur[1] - prev[1]) / this.v.s, L.width, L.height);
-        return;
-      }
-      if (P.size === 2 && editing) {
-        const [a, b] = [...P.values()],
-          dist = Math.hypot(a[0] - b[0], a[1] - b[1]),
-          ang = (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI;
-        if (last && last.ang != null) {
-          let dr = ang - last.ang;
-          dr = ((dr + 540) % 360) - 180;
-          this.editHook.pinch(dist / last.dist, dr);
+      if (gesture === 'decal') {
+        if (P.size === 1)
+          this.editHook.dragTo(...toUV(cur)); // posición absoluta: no se pierde arrastre
+        else if (P.size === 2) {
+          const [a, b] = [...P.values()],
+            dist = Math.hypot(a[0] - b[0], a[1] - b[1]),
+            ang = (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI;
+          if (last && last.ang != null) {
+            let dr = ang - last.ang;
+            dr = ((dr + 540) % 360) - 180;
+            this.editHook.pinch(dist / last.dist, dr);
+          }
+          last = { dist, ang, mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] };
         }
-        last = { dist, ang, mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] };
         return;
       }
       if (P.size === 1) {
@@ -230,6 +251,10 @@ export class View2D {
     const up = e => {
       P.delete(e.pointerId);
       last = null;
+      if (!P.size) {
+        if (gesture === 'decal' && this.editHook) this.editHook.end();
+        gesture = null;
+      } else if (gesture === 'decal' && P.size === 1) this.editHook.grab(...toUV([...P.values()][0])); // tras el pellizco
       if (e.type !== 'pointerup' || P.size || moved > 10) return;
       const [x, y] = xy(e),
         now = performance.now();
@@ -300,12 +325,14 @@ export class View2D {
     mer.unshift([m.s_tip, VT[2 * tt], VT[2 * tt + 1]]);
     return (this.uvT = { v2t, edges, mer });
   }
-  renderTex(size = this.api.texSize()) {
+  renderTex(size = this.api.texSize(), reuse = null) {
     const { api } = this,
       [W, H] = size,
-      c = mk(W, H),
+      c = reuse && reuse.width === Math.round(W) && reuse.height === Math.round(H) ? reuse : mk(W, H),
       g = c.getContext('2d'),
       VT = api.base.VT;
+    if (reuse && c !== reuse) reuse.width = reuse.height = 0;
+    g.clearRect(0, 0, W, H);
     g.drawImage(api.baseLayer(), 0, 0, W, H);
     const t = api.tattooLayer();
     if (t) g.drawImage(t, 0, 0, W, H);

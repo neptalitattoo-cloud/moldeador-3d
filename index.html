@@ -2,15 +2,15 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-MktswifMa6I5FWYrkb2HpOY9/zTOZJhIO4VcJBYyrDI='; worker-src 'self'; img-src 'self' blob: data:; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-PMvZ3tl3nz8kkLoTtBU1fkgBvdiJAfi2316fw8N8GtE='; worker-src 'self'; img-src 'self' blob: data:; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#1d1b1a">
 <title>Moldeador 3D · medidas del cliente</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="css/app.css?v=8">
-<script type="importmap">{"imports":{"three":"./vendor/three.module.min.js?v=8","three/addons/OrbitControls.js":"./vendor/OrbitControls.js?v=8"}}</script>
+<link rel="stylesheet" href="css/app.css?v=9">
+<script type="importmap">{"imports":{"three":"./vendor/three.module.min.js?v=9","three/addons/OrbitControls.js":"./vendor/OrbitControls.js?v=9"}}</script>
 </head>
 <body>
 <header>
@@ -108,17 +108,17 @@
     <button type="button" id="edEncajar" class="ghost small">⤢ Encajar</button>
     <button type="button" id="edListo" class="primary">Listo</button>
   </div>
-  <div class="ed-stage"><canvas id="edCanvas"></canvas></div>
+  <div class="ed-stage"><canvas id="edCanvas" role="img" aria-label="Foto del brazo (usa las herramientas de arriba)"></canvas></div>
   <div class="ed-panel">
     <div data-p="gotas">
       <span id="edSwatch" class="swatch"></span>
-      <span id="edHex" class="hint">Toca la piel en una zona con buena luz.</span>
+      <span id="edHex" class="hint" aria-live="polite">Toca la piel en una zona con buena luz.</span>
       <button type="button" id="edUsarTono" class="primary" disabled>Usar este tono</button>
     </div>
     <div data-p="lazo" hidden>
-      <span class="hint">Rodea el tatuaje con el dedo; al soltar se cierra.</span>
+      <span class="hint">Rodea el tatuaje con el dedo, bien pegado a él; al soltar se cierra.</span>
       <label>Nombre <input type="text" id="edNombre" maxlength="30" placeholder="p. ej. rosa" autocomplete="off"></label>
-      <label>Alto del tatuaje (cm) <input type="text" id="edAlto" inputmode="decimal" autocomplete="off" placeholder="obligatorio"></label>
+      <label>Alto del tatuaje (cm) <input type="text" id="edAlto" inputmode="decimal" autocomplete="off" placeholder="obligatorio" aria-describedby="edAltoAyuda"><small id="edAltoAyuda" class="hint">De arriba abajo de lo que rodeaste (sin el borde suave).</small></label>
       <label>Borde suave <input type="range" id="edBorde" min="0" max="30" value="8"></label>
       <button type="button" id="edBorrar" class="ghost">Borrar trazo</button>
       <button type="button" id="edRecortar" class="primary" disabled>Añadir recorte</button>
@@ -126,15 +126,15 @@
     <div data-p="medir" hidden>
       <span class="hint">Opcional: traza una línea entre dos puntos que conozcas (p. ej. punta del hombro → codo) y escribe cuánto mide.</span>
       <label>Esa línea mide (cm) <input type="text" id="edMideCm" inputmode="decimal" autocomplete="off"></label>
-      <span id="edEscala" class="hint">Sin calibrar: escribe el alto a mano.</span>
+      <span id="edEscala" class="hint" aria-live="polite">Sin calibrar: escribe el alto a mano.</span>
     </div>
     <div data-p="mover" hidden><span class="hint">Arrastra para mover la foto; pellizca o usa la rueda para acercar. Con dos dedos también se mueve en cualquier herramienta.</span></div>
   </div>
 </div>
 <div id="update" class="toast" role="status" aria-live="polite" hidden>
-  Nueva versión del Moldeador disponible. <button type="button" id="updBtn" class="primary">Recargar</button>
+  Nueva versión del Moldeador disponible.<span id="updWarn" hidden> Al recargar se pierden la foto y los recortes.</span> <button type="button" id="updBtn" class="primary">Recargar</button>
   <button type="button" id="updLater" class="ghost">Luego</button>
 </div>
-<script type="module" src="js/app.js?v=8"></script>
+<script type="module" src="js/app.js?v=9"></script>
 </body>
 </html>

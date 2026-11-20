@@ -143,3 +143,25 @@ test('extremos válidos de la mano y del brazo: resultado finito', () => {
     }
   }
 });
+
+test('contorno de nudillos 15, 18, 21, 25 y 32 cm: se alcanza a ±0,3 cm', () => {
+  for (const c of [15, 18, 21, 25, 32]) {
+    const o = K.fit(base, { ...EJ, c_nudillos: c, largo_mano: 19 });
+    const row = o.report.rows.find(([n]) => /nudillos/i.test(n));
+    assert.ok(row, 'sin fila de nudillos');
+    assert.ok(Math.abs(row[2] - c) <= K.FIT_TOLERANCE, `${c} cm: sale ${row[2].toFixed(2)}`);
+    assert.equal(o.report.flips, 0, `${c} cm: pliegues`);
+  }
+});
+
+test('nudillos automático dentro de 15–32 cm, y avisos si el dato parece un ancho o no cuadra', () => {
+  for (const c_muneca of [9, 20, 40]) {
+    const o = K.fit(base, { ...EJ, c_muneca, c_antebrazo: Math.max(c_muneca, 22) });
+    const row = o.report.rows.find(([n]) => /nudillos/i.test(n));
+    assert.ok(row[1] >= 15 && row[1] <= 32, `muñeca ${c_muneca}: nudillos ${row[1]}`);
+  }
+  const w = x => K.validateInputs({ ...EJ, ...x }).warn.join(' ');
+  assert.match(w({ c_nudillos: 15 }), /ancho/); // 15 < 0,9 × 20 de muñeca
+  assert.match(w({ c_nudillos: 32, largo_mano: 12 }), /mano muy ancha/);
+  assert.equal(w({ c_nudillos: 21, largo_mano: 19 }), '');
+});
