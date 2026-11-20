@@ -1,5 +1,8 @@
-# Bake base right-arm data for the web moldeador (clean arm geometry, original UVs)
-import sys, json; sys.path.insert(0,'/workspace/sleeve/scripts')
+# Hornea la malla base del brazo derecho para la web (geometría limpia, UV originales).
+# Uso: MOLDEADOR_SRC_OBJ=/ruta/brazo_vertical.obj python3 herramientas/web_bake.py
+# (el OBJ fuente no está en el repo: es un modelo de terceros; el resultado sí: data/brazo_derecho.*)
+# Nota: los campos dir_outer/dir_back de la vista 2D se añaden después (ver README de herramientas).
+import sys, json; sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent / 'lib'))
 import numpy as np, fit_measures as fm, hand_measure as hm
 V0,VT,F,FT=fm.V0,fm.VT,fm.F,fm.FT
 M=fm.measure(V0); C,T,ss=M['C'],M['T'],M['ss']; s_v,off=M['s_v'],M['off']
@@ -29,6 +32,6 @@ blobs=[('V0',V0.astype('<f4')),('VT',VT.astype('<f4')),('F',F.astype('<u4')),('F
 off_b=0; buf=b''; meta['blobs']={}
 for k,arr in blobs:
     b=arr.tobytes(); meta['blobs'][k]=[off_b,arr.size,arr.dtype.str]; buf+=b; off_b+=len(b)
-open('/workspace/sleeve/web_moldeador/data/brazo_derecho.bin','wb').write(buf)
-json.dump(meta,open('/workspace/sleeve/web_moldeador/data/brazo_derecho.json','w'))
+open(str(fm.REPO/'data')+'/brazo_derecho.bin','wb').write(buf)
+json.dump(meta,open(str(fm.REPO/'data')+'/brazo_derecho.json','w'))
 print(len(buf)/1e6,'MB', 'HL0',HL0,'mer',len(mer), 'base tapes el/wr/ax',M['tape'](S_EL),M['tape'](S_WR),M['tape'](S_AX))

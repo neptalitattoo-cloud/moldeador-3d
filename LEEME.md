@@ -31,3 +31,12 @@ Botón «🗺️ Ver en 2D» junto al de guías. Dos modos:
 - **Siluetas**: el brazo ajustado visto de exterior, frente, interior y espalda (proyección ortográfica, sin perspectiva) con los contornos, largos, mano y nudillos numerados y en cm, más una barra de escala de 10 cm. Pensado para imprimir como referencia.
 
 Arrastra para mover, pellizca o usa la rueda para hacer zoom y toca dos veces para encajar. «⬇ Descargar PNG 2D» guarda la vista actual en alta resolución (textura al tamaño de la textura; siluetas a 28 px/cm).
+
+## Novedades v5 (auditoría)
+- El formulario empieza vacío (la web es pública); «Cargar ejemplo» rellena unas medidas de muestra.
+- Se validan todas las medidas (mensajes en español) y nunca se exporta un modelo con valores no numéricos. Los nombres con guion o acentos («Ana-María») exportan bien.
+- El moldeado va en segundo plano (Web Worker): la página no se congela. El visor 3D sólo dibuja cuando algo cambia (menos batería).
+- En iPhone/iPad, al descargar aparece «📤 Enviar a…» para mandarlo directo a Procreate o a Archivos.
+- Si cambias una medida después de moldear, las descargas se desactivan hasta que vuelvas a moldear.
+- Texturas limitadas a 2048 px en iPhone y escaladas manteniendo la proporción, para no agotar la memoria de Safari.
+- Funciona sin conexión; cuando hay una versión nueva aparece «Nueva versión… Recargar».

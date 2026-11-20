@@ -2,13 +2,14 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-raO8+G/PJjOUmDNc6uRlYNN2LzuUoyK3KbLr01EyBjY='; worker-src 'self'; img-src 'self' blob: data:; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#1d1b1a">
 <title>Moldeador 3D · medidas del cliente</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="css/app.css">
+<link rel="stylesheet" href="css/app.css?v=5">
 <script type="importmap">{"imports":{"three":"./vendor/three.module.min.js","three/addons/":"./vendor/"}}</script>
 </head>
 <body>
@@ -18,11 +19,12 @@
 </header>
 <main>
   <section id="panel">
-    <form id="form" autocomplete="off">
+    <form id="form" autocomplete="off" novalidate>
       <div class="row">
         <label>Parte del cuerpo <select id="parte"></select></label>
-        <label>Cliente <input id="cliente" type="text" value="Mike" maxlength="40"></label>
+        <label>Cliente <input id="cliente" type="text" value="" maxlength="40" placeholder="Nombre del cliente"></label>
       </div>
+      <button type="button" id="ejemplo" class="ghost small">Cargar ejemplo</button>
       <fieldset><legend>Largos (cm)</legend><div id="largos" class="grid"></div>
         <p class="hint">Medidos por la cara externa del brazo desde la punta del hombro.</p></fieldset>
       <fieldset><legend>Contornos (cm)</legend><div id="contornos" class="grid"></div></fieldset>
@@ -39,21 +41,21 @@
         <p class="hint">Si lo dejas vacío: largo = 0,79 × antebrazo, ancho = 0,45 × largo, contorno nudillos ≈ 1,04 × muñeca.</p></fieldset>
       <fieldset><legend>Capas</legend>
         <label class="file">Capa de tatuaje PNG (transparente, sobre el UV original)<input type="file" id="tat" accept="image/png"></label>
-        <button type="button" id="tatReset" class="ghost">Quitar capa de tatuaje</button>
+        <button type="button" id="tatReset" class="ghost" disabled>Quitar capa de tatuaje</button>
         <span id="tatInfo" class="hint">Sin capa de tatuaje</span>
-        <label class="file" style="margin-top:8px">Capa base propia (opcional, sustituye a la piel neutra)<input type="file" id="tex" accept="image/png,image/jpeg"></label>
-        <button type="button" id="texReset" class="ghost">Volver a piel neutra</button>
+        <label class="file mt8">Capa base propia (opcional, sustituye a la piel neutra)<input type="file" id="tex" accept="image/png,image/jpeg"></label>
+        <button type="button" id="texReset" class="ghost" disabled>Volver a piel neutra</button>
         <span id="texInfo" class="hint">Piel neutra solo dentro de la silueta del brazo y las manos</span>
         <p class="hint">Procreate importa una sola capa base por modelo: la piel va dentro del USDZ y el tatuaje y las guías se descargan como PNG para insertarlos como capas nuevas (ver instrucciones en el ZIP).</p></fieldset>
-      <button type="submit" id="go" class="primary">Moldear</button>
-      <p id="status" class="status">Cargando modelo base…</p>
+      <button type="submit" id="go" class="primary" disabled>Moldear</button>
+      <p id="status" class="status" role="status" aria-live="polite">Cargando modelo base…</p>
     </form>
   </section>
   <section id="vista">
     <div id="viewer">
       <div class="vbar">
-        <button type="button" id="btnGuias" class="overlay" aria-pressed="false">📏 Mostrar guías de medición</button>
-        <button type="button" id="btn2D" class="overlay" aria-pressed="false">🗺️ Ver en 2D</button>
+        <button type="button" id="btnGuias" class="overlay" aria-pressed="false" disabled>📏 Mostrar guías de medición</button>
+        <button type="button" id="btn2D" class="overlay" aria-pressed="false" disabled>🗺️ Ver en 2D</button>
         <div id="bar2d" class="bar2d" hidden>
           <div id="seg2d" class="seg" role="group" aria-label="Tipo de vista 2D">
             <button type="button" data-m="tex" aria-pressed="true">Textura plana</button><button type="button" data-m="sil" aria-pressed="false">Siluetas</button>
@@ -69,11 +71,21 @@
       <button id="dlCapas" disabled>Descargar capas PNG (tatuaje / guías)</button>
       <button id="dlObj" disabled>Descargar OBJ + MTL + PNG (zip)</button>
     </div>
+    <div id="ready" class="ready" role="status" aria-live="polite" hidden>
+      <span id="readyTxt"></span>
+      <button type="button" id="shareBtn" class="primary">📤 Enviar a… (Procreate, Archivos)</button>
+      <a id="dlLink" class="btn" download>⬇ Guardar</a>
+    </div>
+    <p id="stale" class="hint warn" hidden>⚠ Has cambiado medidas después de moldear: pulsa «Moldear» otra vez para poder exportar.</p>
     <table id="tabla"><thead><tr><th>Medida</th><th>Objetivo</th><th>Resultado</th><th>Dif.</th></tr></thead><tbody></tbody></table>
     <p id="extra" class="hint"></p>
     <p class="hint">Vista 2D: «Textura plana» muestra el mapa UV como en Procreate (Acciones › 3D › Mostrar textura 2D) con la piel, tu capa de tatuaje, las guías azules y, si las activas, las guías rosas de medición. «Siluetas» dibuja el brazo ajustado de frente, espalda, interior y exterior con las medidas en cm y una escala de 10 cm, para imprimir como referencia. Arrastra para mover, pellizca o usa la rueda para hacer zoom y toca dos veces para encajar.</p>
   </section>
 </main>
-<script type="module" src="js/app.js"></script>
+<div id="update" class="toast" role="status" aria-live="polite" hidden>
+  Nueva versión del Moldeador disponible. <button type="button" id="updBtn" class="primary">Recargar</button>
+  <button type="button" id="updLater" class="ghost">Luego</button>
+</div>
+<script type="module" src="js/app.js?v=5"></script>
 </body>
 </html>

@@ -1,0 +1,5 @@
+# Herramientas Python (opcionales: la web no las necesita)
+numpy>=1.24
+scipy>=1.10
+Pillow>=10
+usd-core>=23.11   # sólo para usdz_writer.py y para validar USDZ con usdchecker

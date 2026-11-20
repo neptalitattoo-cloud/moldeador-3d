@@ -1,12 +1,14 @@
 # Separa la textura de Neptali en: piel limpia (solo dentro de las islas UV + sangrado) y capa de tatuaje (tinta, transparente fuera)
-import sys; sys.path.insert(0,'/workspace/sleeve/scripts')
+import sys; sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent / 'lib'))
 import numpy as np, json
 from PIL import Image, ImageDraw
 from scipy import ndimage as ndi
-from objio import load_obj
-OUT='/workspace/sleeve/final_neptali/capas/'
-SRC='/workspace/sleeve/final_neptali/brazo_medidas_mano/_11535_arm_V3_FINALdefault-color.png'
-_,VT,F,FT=load_obj('/workspace/sleeve/final_neptali/brazo_final_vertical/brazo_mike_vertical.obj')
+import os, fit_measures as fm
+# Uso: python3 herramientas/split_layers.py textura_pintada.png carpeta_salida/
+# (usa los UV de la malla base del repo)
+if len(sys.argv) < 3: sys.exit('Uso: split_layers.py textura.png carpeta_salida/')
+SRC, OUT = sys.argv[1], os.path.join(sys.argv[2], ''); os.makedirs(OUT, exist_ok=True)
+VT, F, FT = fm.VT, fm.F, fm.FT
 im=np.asarray(Image.open(SRC).convert('RGB')).astype(np.float64); H,W,_=im.shape
 # 1) máscara de islas UV
 m=Image.new('L',(W,H),0); d=ImageDraw.Draw(m)

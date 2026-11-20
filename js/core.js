@@ -146,6 +146,42 @@ function deformArm(base, kn, kfun) {
   return { P, pnAt };
 }
 
+// ---------- validación ----------
+// Rangos en cm: amplios, sólo filtran errores de tecleo y valores imposibles.
+export const RANGOS = {
+  hombro_codo: [15, 60], codo_muneca: [12, 50], hombro_muneca: [25, 110],
+  c_axila: [8, 80], c_biceps: [8, 80], c_codo: [8, 80], c_antebrazo: [8, 80], c_muneca: [8, 80],
+  largo_mano: [10, 30], ancho_nudillos: [4, 15],
+};
+const OPCIONALES = new Set(['codo_muneca', 'hombro_muneca', 'largo_mano', 'ancho_nudillos']);
+export function validateInputs(raw, labels = {}) {
+  const inp = { ...raw }, warn = [], lab = id => labels[id] || id;
+  for (const [id, v] of Object.entries(inp)) if (v != null && !Number.isFinite(v)) throw new Error(`Revisa: ${lab(id)} (no es un número).`);
+  if (inp.hombro_codo == null) throw new Error(`Falta: ${lab('hombro_codo')}.`);
+  if (inp.hombro_muneca == null && inp.codo_muneca == null) throw new Error('Falta codo → muñeca u hombro → muñeca.');
+  if (inp.hombro_muneca == null) inp.hombro_muneca = inp.hombro_codo + inp.codo_muneca;
+  for (const [id, [lo, hi]] of Object.entries(RANGOS)) {
+    const v = inp[id];
+    if (v == null) { if (!OPCIONALES.has(id)) throw new Error(`Falta: ${lab(id)}.`); continue; }
+    if (v < lo || v > hi) throw new Error(`Revisa: ${lab(id)} (entre ${lo} y ${hi} cm).`);
+  }
+  if (inp.codo_muneca != null && Math.abs(inp.hombro_codo + inp.codo_muneca - inp.hombro_muneca) > 0.5)
+    warn.push(`Ojo: 1 + 2 = ${(inp.hombro_codo + inp.codo_muneca).toFixed(1)} no cuadra con 3 = ${inp.hombro_muneca}; uso hombro→codo y hombro→muñeca.`);
+  if (inp.hombro_muneca - inp.hombro_codo < 10) throw new Error('El antebrazo sale demasiado corto: revisa los largos.');
+  if (inp.largo_mano != null && inp.ancho_nudillos != null && inp.ancho_nudillos >= inp.largo_mano)
+    throw new Error('El ancho de nudillos no puede ser mayor que el largo de la mano.');
+  return { inp, warn };
+}
+export function assertFinite(A, que) {
+  for (let i = 0; i < A.length; i++) if (!Number.isFinite(A[i])) throw new Error(`${que}: valor no numérico (índice ${i}). Revisa las medidas.`);
+}
+// Identificador USD válido: [A-Za-z_][A-Za-z0-9_]*
+export function usdIdent(s) {
+  let id = String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9_]/g, '_');
+  if (!/^[A-Za-z_]/.test(id)) id = '_' + id;
+  return id;
+}
+
 // ---------- mano ----------
 function mcpSection(base, P, wc, a, hand) {
   let HL = -1e9; for (const i of hand) { const d = (P[3 * i] - wc[0]) * a[0] + (P[3 * i + 1] - wc[1]) * a[1] + (P[3 * i + 2] - wc[2]) * a[2]; if (d > HL) HL = d; }
@@ -153,7 +189,9 @@ function mcpSection(base, P, wc, a, hand) {
   for (const i of hand) { const p = [P[3 * i] - wc[0], P[3 * i + 1] - wc[1], P[3 * i + 2] - wc[2]]; if (Math.abs(dot(p, a) - d0) < 0.25) Q.push([dot(p, u), dot(p, v)]); }
   const lab = components(Q, 0.7), cnt = new Map(); for (const l of lab) cnt.set(l, (cnt.get(l) || 0) + 1);
   let big = -1, bc = -1; for (const [l, c] of cnt) if (c > bc) { bc = c; big = l; }
-  const R = Q.filter((_, i) => lab[i] === big), H = hull2d(R), [br, ang] = maxCaliper(H);
+  const R = Q.filter((_, i) => lab[i] === big);
+  if (R.length < 3) throw new Error('No se encontró la sección de los nudillos: revisa largo y ancho de la mano.');
+  const H = hull2d(R), [br, ang] = maxCaliper(H);
   const cen = [R.reduce((s, q) => s + q[0], 0) / R.length, R.reduce((s, q) => s + q[1], 0) / R.length];
   return { HL, d0, circ: perim(H), br, ang, cen, u, v };
 }
@@ -177,6 +215,7 @@ function handFit(base, P1, wc, t, tgt) {
   for (let it = 0; it < 10; it++) {
     sa *= tgt.HL / M.HL; s1 *= tgt.br / M.br; s2 *= Math.pow(tgt.circ / M.circ, 1.6);
     s2 = Math.min(2.5, Math.max(0.4, s2)); s1 = Math.min(2.5, Math.max(0.4, s1)); sa = Math.min(1.8, Math.max(0.5, sa));
+    if (!Number.isFinite(sa * s1 * s2)) throw new Error('El ajuste de la mano no converge: revisa las medidas de la mano.');
     P = apply(sa, s1, s2); M = mcpSection(base, P, wc, a, hand);
   }
   return { P, sa, s1, s2, before, after: { HL: M.HL, br: M.br, circ: M.circ } };
@@ -184,6 +223,7 @@ function handFit(base, P1, wc, t, tgt) {
 
 // ---------- ajuste completo ----------
 export function fit(base, inp, log = () => {}) {
+  inp = validateInputs(inp).inp; // protege también al worker, a Node y a los tests
   const m = base.meta, V0 = base.V0;
   const tEl = inp.hombro_codo, tWr = inp.hombro_muneca || (inp.hombro_codo + inp.codo_muneca), forearm = tWr - tEl;
   const circT = [inp.c_axila, inp.c_biceps, inp.c_codo, inp.c_antebrazo, inp.c_muneca];
@@ -220,7 +260,10 @@ export function fit(base, inp, log = () => {}) {
       corr = corr.map((c, i) => c * (sg[i] <= ss[0] ? rt[0] : sg[i] >= ss[4] ? rt[4] : g(sg[i])));
     }
   }
-  return { P, report: measureAll(base, P, inp, { tEl, tWr, HLt, brT, circHand }, hand) };
+  const report = measureAll(base, P, inp, { tEl, tWr, HLt, brT, circHand }, hand);
+  assertFinite(P, 'Malla ajustada');
+  for (const [n, , v] of report.rows) if (!Number.isFinite(v)) throw new Error(`No se pudo medir «${n}» en el modelo ajustado.`);
+  return { P, report };
 }
 export function measureAll(base, P, inp, t, hand) {
   const m = base.meta, tp = tapeFn(base, P);
@@ -267,6 +310,7 @@ export function vertexNormals(base, P) {
 }
 const fx = x => (Math.round(x * 1e4) / 1e4).toString();
 export function makeOBJ(base, P, name, mtlName, texName) {
+  assertFinite(P, 'OBJ');
   const L = [`# Moldeador — ${name} (cm, Y arriba)`, `mtllib ${mtlName}`, `o ${name}`];
   for (let i = 0; i < P.length; i += 3) L.push(`v ${fx(P[i])} ${fx(P[i + 1])} ${fx(P[i + 2])}`);
   const VT = base.VT; for (let i = 0; i < VT.length; i += 2) L.push(`vt ${fx(VT[i])} ${fx(VT[i + 1])}`);
@@ -275,8 +319,9 @@ export function makeOBJ(base, P, name, mtlName, texName) {
   const mtl = `newmtl piel\nKa 1 1 1\nKd 1 1 1\nKs 0 0 0\nNs 10\nd 1\nillum 1\nmap_Kd ${texName}\n`;
   return { obj: L.join('\n') + '\n', mtl };
 }
-export function makeUSDA(base, P, name) {
-  const N = vertexNormals(base, P), F = base.F, FT = base.FT, VT = base.VT;
+export function makeUSDA(base, P, rawName) {
+  assertFinite(P, 'USDA');
+  const name = usdIdent(rawName), N = vertexNormals(base, P), F = base.F, FT = base.FT, VT = base.VT;
   const tri = (A, k) => { const o = []; for (let i = 0; i < A.length; i += k) o.push('(' + Array.from(A.subarray(i, i + k), fx).join(', ') + ')'); return o.join(', '); };
   let mn = [1e9, 1e9, 1e9], mx = [-1e9, -1e9, -1e9]; for (let i = 0; i < P.length; i += 3) for (let c = 0; c < 3; c++) { mn[c] = Math.min(mn[c], P[i + c]); mx[c] = Math.max(mx[c], P[i + c]); }
   return `#usda 1.0
@@ -371,10 +416,12 @@ export function storeZip(files, align = 64) { // files: [[name, Uint8Array]]
   const all = [...parts, ...central, e], out = new Uint8Array(all.reduce((s, a) => s + a.length, 0)); let p = 0; for (const a of all) { out.set(a, p); p += a.length; }
   return out;
 }
-export function makeUSDZ(base, P, name, pngBytes) {
+export function makeUSDZ(base, P, rawName, pngBytes) {
+  const name = usdIdent(rawName);
   return storeZip([[`${name}.usda`, new TextEncoder().encode(makeUSDA(base, P, name))], ['textures/piel.png', pngBytes]]);
 }
-export const MIKE = { hombro_codo: 32, codo_muneca: 24, hombro_muneca: 56, c_axila: 31, c_biceps: 33, c_codo: 29, c_antebrazo: 30, c_muneca: 20 };
+export const EJEMPLO = { hombro_codo: 32, codo_muneca: 24, hombro_muneca: 56, c_axila: 31, c_biceps: 33, c_codo: 29, c_antebrazo: 30, c_muneca: 20 };
+export const MIKE = EJEMPLO; // compatibilidad
 
 // ---------- guías de medición (geometría 3D para la vista previa) ----------
 export function stationS(base, P) {

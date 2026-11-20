@@ -14,15 +14,19 @@ export class View2D {
     this.host = host; this.api = api; this.mode = 'tex'; this.active = false; this.cache = {}; this.v = { s: 1, tx: 0, ty: 0 };
     this.cv = document.createElement('canvas'); this.cv.className = 'v2d'; this.cv.style.display = 'none'; host.appendChild(this.cv);
     this._pointers();
-    new ResizeObserver(() => { if (this.active) { const cols = this._cols(); if (cols !== this.lastCols) delete this.cache.sil, delete this.cache.silG; this._size(); this.ensure(); this.fit(); this.draw(); } }).observe(host);
+    new ResizeObserver(() => { if (this.active) { const cols = this._cols(); if (cols !== this.lastCols) this._free(['sil', 'silG']); this._size(); this.ensure(); this.fit(); this.draw(); } }).observe(host);
   }
   _cols() { return this.host.clientWidth < this.host.clientHeight * 1.3 ? 2 : 4; }
-  show(on) { this.active = on; this.cv.style.display = on ? 'block' : 'none'; if (on) { this._size(); this.ensure(); this.fit(); this.draw(); } }
+  show(on) {
+    this.active = on; this.cv.style.display = on ? 'block' : 'none';
+    if (on) { this._size(); this.ensure(); this.fit(); this.draw(); } else { this._free(Object.keys(this.cache)); this.cv.width = this.cv.height = 0; }
+  }
+  _free(keys) { // libera la memoria de los canvas en caché (importante en iOS)
+    for (const k of keys) { const c = this.cache[k], cv = c && (c.canvas || c); if (cv && cv.width) cv.width = cv.height = 0; delete this.cache[k]; }
+  }
   setMode(m) { this.mode = m; if (this.active) { this.ensure(); this.fit(); this.draw(); } }
   invalidate(what) {
-    if (what === 'all') this.cache = {};
-    else if (what === 'tex') { delete this.cache.tex; delete this.cache.texG; }
-    else if (what === 'guides') { delete this.cache.texG; delete this.cache.silG; }
+    this._free(what === 'all' ? Object.keys(this.cache) : what === 'tex' ? ['tex', 'texG'] : what === 'guides' ? ['texG', 'silG'] : []);
     if (this.active) { this.ensure(); this.draw(); }
   }
   ensure() {
@@ -46,13 +50,21 @@ export class View2D {
     cv.addEventListener('pointerdown', e => { cv.setPointerCapture(e.pointerId); P.set(e.pointerId, xy(e)); last = null; });
     cv.addEventListener('pointermove', e => {
       if (!P.has(e.pointerId)) return; const prev = P.get(e.pointerId), cur = xy(e); P.set(e.pointerId, cur);
+      moved += Math.hypot(cur[0] - prev[0], cur[1] - prev[1]);
       if (P.size === 1) { this.v.tx += cur[0] - prev[0]; this.v.ty += cur[1] - prev[1]; this.draw(); }
       else if (P.size === 2) { const [a, b] = [...P.values()], dist = Math.hypot(a[0] - b[0], a[1] - b[1]), mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
         if (last) { this.v.tx += mid[0] - last.mid[0]; this.v.ty += mid[1] - last.mid[1]; zoomAt(dist / last.dist, mid[0], mid[1]); } last = { dist, mid }; }
     });
-    const up = e => { P.delete(e.pointerId); last = null; }; cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+    let tap = null, moved = 0; // doble toque por pointer (dblclick no siempre llega en iOS)
+    cv.addEventListener('pointerdown', () => { moved = 0; });
+    const up = e => {
+      P.delete(e.pointerId); last = null;
+      if (e.type !== 'pointerup' || P.size || moved > 10) return;
+      const [x, y] = xy(e), now = performance.now();
+      if (tap && now - tap.t < 300 && Math.hypot(x - tap.x, y - tap.y) < 20) { tap = null; this.fit(); this.draw(); } else tap = { t: now, x, y };
+    };
+    cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
     cv.addEventListener('wheel', e => { e.preventDefault(); const [x, y] = xy(e); zoomAt(Math.exp(-e.deltaY * 0.0015), x, y); }, { passive: false });
-    cv.addEventListener('dblclick', () => { this.fit(); this.draw(); });
   }
   // ---------- (a) textura plana ----------
   _uvTables() {
@@ -65,15 +77,15 @@ export class View2D {
     const tt = v2t[m.tip]; mer.unshift([m.s_tip, VT[2 * tt], VT[2 * tt + 1]]);
     return this.uvT = { v2t, edges, mer };
   }
-  renderTex() {
-    const { api } = this, [W, H] = api.texSize(), c = mk(W, H), g = c.getContext('2d'), VT = api.base.VT;
-    g.drawImage(api.baseLayer(), 0, 0); const t = api.tattooLayer(); if (t) g.drawImage(t, 0, 0);
+  renderTex(size = this.api.texSize()) {
+    const { api } = this, [W, H] = size, c = mk(W, H), g = c.getContext('2d'), VT = api.base.VT;
+    g.drawImage(api.baseLayer(), 0, 0, W, H); const t = api.tattooLayer(); if (t) g.drawImage(t, 0, 0, W, H);
     const { edges } = this._uvTables(); g.strokeStyle = 'rgba(255,255,255,0.55)'; g.lineWidth = Math.max(1.5, W / 900); g.beginPath();
     for (const [a, b] of edges) { g.moveTo(VT[2 * a] * W, (1 - VT[2 * a + 1]) * H); g.lineTo(VT[2 * b] * W, (1 - VT[2 * b + 1]) * H); } g.stroke();
     return c;
   }
-  renderTexGuides() {
-    const { api } = this, { K, base } = api, [W, H] = api.texSize(), c = mk(W, H), g = c.getContext('2d');
+  renderTexGuides(size = this.api.texSize()) {
+    const { api } = this, { K, base } = api, [W, H] = size, c = mk(W, H), g = c.getContext('2d');
     if (api.showTattoo()) api.drawTattooGuides(g, W, H);
     const st = api.guideState(); if (!st.on && !st.focus) return c;
     const P = api.P(), S = K.stationS(base, P), act = st.focus ? api.members(st.focus) : [];
@@ -166,7 +178,7 @@ export class View2D {
         const tx = side > 0 ? v.X0 + (v.xmax + 1.6) * ppcm : v.X0 + (v.xmin - 1.6) * ppcm, ty = anchor[1];
         g.lineWidth = 0.05 * ppcm; g.strokeStyle = col; g.setLineDash([0.2 * ppcm, 0.2 * ppcm]); g.beginPath(); g.moveTo(...anchor); g.lineTo(tx - side * 0.8 * ppcm, ty); g.stroke(); g.setLineDash([]);
         this._badge(g, tx, ty, api.num[id], col, 0.7 * ppcm, g.globalAlpha);
-        const a = g.globalAlpha; g.globalAlpha = a; g.fillStyle = '#1d1b1a'; g.textBaseline = 'middle'; g.textAlign = side > 0 ? 'left' : 'right';
+        g.fillStyle = '#1d1b1a'; g.textBaseline = 'middle'; g.textAlign = side > 0 ? 'left' : 'right';
         g.font = font(700, 0.95); g.fillText(SHORT[id], tx + side * 0.95 * ppcm, ty - 0.5 * ppcm); g.font = font(400, 0.95);
         g.fillText(vals[id] != null ? fmt(vals[id]) + (id === 'ancho_nudillos' ? ' ancho' : '') : '—', tx + side * 0.95 * ppcm, ty + 0.6 * ppcm); g.globalAlpha = 1; };
       // contornos (derecha)
@@ -187,8 +199,13 @@ export class View2D {
     return c;
   }
   // ---------- exportación ----------
-  exportCanvas() {
-    if (this.mode === 'tex') { const t = this.cache.tex || this.renderTex(), gd = this.renderTexGuides(), c = mk(t.width, t.height), g = c.getContext('2d'); g.drawImage(t, 0, 0); g.drawImage(gd, 0, 0); return c; }
-    const sil = this.renderSil(28, 4), gd = this.renderSilGuides(sil), g = sil.canvas.getContext('2d'); g.drawImage(gd, 0, 0); return sil.canvas;
+  exportCanvas() { // a resolución completa, sin duplicar la caché de pantalla
+    const free = c => { c.width = c.height = 0; };
+    if (this.mode === 'tex') {
+      const S = this.api.exportSize(), t = this.renderTex(S), gd = this.renderTexGuides(S);
+      t.getContext('2d').drawImage(gd, 0, 0); free(gd); return t;
+    }
+    const sil = this.renderSil(28, 4), gd = this.renderSilGuides(sil); sil.canvas.getContext('2d').drawImage(gd, 0, 0); free(gd); return sil.canvas;
   }
+
 }

@@ -2,7 +2,7 @@
 // (mismo formato .json/.bin) y declarar aquí sus campos y estaciones.
 export const PARTS = {
   brazo_derecho: {
-    nombre: 'Brazo derecho', data: 'data/brazo_derecho', activo: true,
+    nombre: 'Brazo derecho', data: 'data/brazo_derecho', version: '?v=5', activo: true,
     largos: [
       ['hombro_codo', '1. Hombro → codo', 32], ['codo_muneca', '2. Codo → muñeca', 24], ['hombro_muneca', '3. Hombro → muñeca', 56]],
     contornos: [
@@ -21,7 +21,11 @@ export const PARTS = {
       largo_mano: 'Del pliegue de la muñeca a la punta del dedo corazón, mano estirada.',
       ancho_nudillos: 'Ancho de la palma en los nudillos, sin el pulgar.',
     },
-    tatuajes: [['Kanji', 9, ''], ['L♥E', 24, ''], ['Anna', 24, ''], ['Bandas', 39, 6]],
+    // Ejemplo cargable con «Cargar ejemplo» (el formulario empieza vacío). Valores del 3.º número = valor de ejemplo.
+    ejemplo: {
+      cliente: 'Ejemplo', largo_mano: '', ancho_nudillos: '',
+      tatuajes: [['Tatuaje A', 9, ''], ['Tatuaje B', 24, ''], ['Bandas', 39, 6]],
+    },
   },
   brazo_izquierdo: { nombre: 'Brazo izquierdo (próximamente)', activo: false },
   pierna: { nombre: 'Pierna (próximamente)', activo: false },

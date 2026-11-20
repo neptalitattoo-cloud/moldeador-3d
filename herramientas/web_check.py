@@ -1,5 +1,5 @@
 # Comprobación independiente (Python) de un OBJ/USDZ exportado por la web.
-import sys, json, zipfile, struct, io; sys.path.insert(0,'/workspace/sleeve/scripts')
+import sys, json, zipfile, struct, io; sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent / 'lib'))
 import numpy as np, fit_measures as fm
 from objio import load_obj
 from scipy.spatial import ConvexHull
@@ -8,8 +8,8 @@ z=zipfile.ZipFile(objzip); on=[n for n in z.namelist() if n.endswith('.obj')][0]
 open('/tmp/_wc.obj','wb').write(z.read(on)); V,VT,F,FT=load_obj('/tmp/_wc.obj')
 assert len(V)==len(fm.V0) and (F==fm.F).all() and np.abs(VT-fm.VT).max()<1e-4 and (FT==fm.FT).all(), 'topology/UV changed'
 S_AX,S_EL,S_WR=64.93,49.5,25.5; M0=fm.measure(fm.V0); s0=M0['s_v']
-meta=json.load(open('/workspace/sleeve/web_moldeador/data/brazo_derecho.json'))
-mb=np.fromfile('/workspace/sleeve/web_moldeador/data/brazo_derecho.bin',dtype='<u4',offset=meta['blobs']['mer'][0],count=meta['blobs']['mer'][1])
+meta=json.load(open(str(fm.REPO/'data')+'/brazo_derecho.json'))
+mb=np.fromfile(str(fm.REPO/'data')+'/brazo_derecho.bin',dtype='<u4',offset=meta['blobs']['mer'][0],count=meta['blobs']['mer'][1])
 # (A) independiente: cinta por la línea externa (mismos vértices que en la base) + contorno en el plano propio del anillo (PCA)
 pts=[V[meta['tip']]]; S=[meta['s_tip']]; o=0
 for s,n in zip(meta['mer_s'],meta['mer_n']): pts.append(V[mb[o:o+n]].mean(0)); S.append(s); o+=n
