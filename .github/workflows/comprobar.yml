@@ -17,16 +17,24 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm run format:check
+      - name: Python con ruff (formato y reglas)
+        run: |
+          pipx install ruff==0.17.6
+          ruff format --check .
+          ruff check .
 
   unidad:
     name: Pruebas (ajuste, fuzz, golden), versión y CSP
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 2 } # para comparar con el commit anterior
       - uses: actions/setup-node@v4
         with: { node-version: 22 }
       - name: Versión de caché coherente y hash de archivos al día
         run: python3 herramientas/version_sw.py --check
+      - name: Si cambió un archivo precacheado respecto al commit anterior, la versión tiene que subir
+        run: python3 herramientas/version_sw.py --check-git HEAD~1
       - name: El hash de la CSP coincide con el importmap
         run: python3 herramientas/check_csp.py
       - run: node --test tests/fit.test.mjs
@@ -57,16 +65,12 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: npm }
       - run: npm ci
-      - name: Instalar WebKit
-        id: webkit
-        continue-on-error: true # si WebKit no se puede instalar en el runner, queda Chromium como respaldo
-        run: npx playwright install --with-deps webkit
-      - name: Instalar Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Instalar WebKit (obligatorio) y Chromium
+        run: npx playwright install --with-deps webkit chromium
       - name: E2E en WebKit (lo más parecido a Safari del iPad)
-        if: steps.webkit.outcome == 'success'
         run: npx playwright test --project=webkit
       - name: E2E en Chromium
+        if: success() || failure()
         run: npx playwright test --project=chromium
       - uses: actions/upload-artifact@v4
         if: failure()

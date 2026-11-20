@@ -262,7 +262,7 @@ function Tat(base, s) {
   return [T[3 * j], T[3 * j + 1], T[3 * j + 2]];
 }
 export function circAt(base, P, s0) {
-  const idx = slab(base, s0, 0.25);
+  const idx = slab(base, s0, SECTION_HALF_W);
   if (idx.length < 10) return NaN;
   const t = Tat(base, s0);
   let e1 = cross(t, [0, 0, 1]);
@@ -379,6 +379,7 @@ export const KNUCKLE_CIRC_K = 2.45; // contorno de nudillos si el usuario da el 
 export const HAND_CIRC_EXP = 1.6; // exponente de corrección del grosor de la mano por iteración
 export const HAND_BLEND = [0.3, 2.7]; // la mano empieza 0,3 cm tras la muñeca y se mezcla en 2,7 cm
 export const SECTION_HALF_W = 0.25; // media anchura (cm) de las rodajas de sección
+export const FIT_TOLERANCE = 0.3; // cm: diferencia máxima aceptada entre medida pedida y obtenida
 export const SECTION_LINK_R = 0.7; // radio (cm) para unir puntos de una misma sección
 export const FIT_ITERS = 12,
   FIT_PROFILE_ITERS = 8,
@@ -900,7 +901,7 @@ export function stationS(base, P) {
 }
 export function ringLoop(base, P, s0, grow = 0.15) {
   // contorno (envolvente) del corte en s0, algo inflado, en 3D
-  const idx = slab(base, s0, 0.25);
+  const idx = slab(base, s0, SECTION_HALF_W);
   if (idx.length < 10) return null;
   const t = Tat(base, s0),
     e1 = norm(cross(t, [0, 0, 1])),
@@ -924,7 +925,7 @@ export function ringLoop(base, P, s0, grow = 0.15) {
 }
 export function outward(base, P, p, s, d = 0.15) {
   // empuja un punto de la superficie hacia fuera del eje
-  const idx = slab(base, s, 0.25);
+  const idx = slab(base, s, SECTION_HALF_W);
   if (!idx.length) return p;
   const c = [0, 0, 0];
   for (const i of idx) for (let k = 0; k < 3; k++) c[k] += P[3 * i + k] / idx.length;
@@ -947,7 +948,7 @@ export function handGuides(base, P) {
     hand = [];
   for (let i = 0; i < m.nV; i++) {
     const d = (P[3 * i] - wc[0]) * t[0] + (P[3 * i + 1] - wc[1]) * t[1] + (P[3 * i + 2] - wc[2]) * t[2];
-    if (d > 0.3) hand.push(i);
+    if (d > HAND_BLEND[0]) hand.push(i);
   }
   const S = mcpSection(base, P, wc, a, hand);
   let tipI = hand[0],

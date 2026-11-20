@@ -31,12 +31,16 @@ npx playwright install webkit chromium && npm run e2e   # fit → USDZ → reope
 python3 -m unittest discover -s tests -p 'test_*.py'    # Python tools read the repo .bin
 node tests/make_usdz.mjs out && python3 herramientas/validar_usdz.py out/*.usdz   # usd-core ≥ 26.3
 python3 herramientas/version_sw.py --check && python3 herramientas/check_csp.py
+ruff format --check . && ruff check .                # Python tools style
 ```
 CI (`.github/workflows/comprobar.yml`) runs all of the above.
 
 ## Releasing
-Bump the cache version everywhere at once: `python3 herramientas/version_sw.py 7` (rewrites `?v=N`, `moldeador-vN` and `herramientas/.version_hash`).
-CI fails if any precached file changed without a version bump.
+Bump the cache version everywhere at once: `python3 herramientas/version_sw.py 8` (rewrites `?v=N` in every local file, including
+`vendor/` through the importmap, `moldeador-vN`, the importmap's CSP hash and `herramientas/.version_hash`).
+It refuses to reuse the same (or a lower) N once a precached file changed (`--force` overrides).
+CI fails if a precached file changed without a version bump, both against the stored hash and against the previous commit
+(`version_sw.py --check-git HEAD~1`).
 Navigations are network-first with a 3 s timeout, then the cached copy; versioned assets are cache-first, so old and new files never mix. Open pages show «Nueva versión… Recargar».
 Content-Security-Policy is a `<meta>` in `index.html`; if you edit the importmap, update its sha256 hash (`check_csp.py` prints the right one).
 

@@ -1,6 +1,6 @@
 import { test, expect, devices } from '@playwright/test';
 import fs from 'node:fs';
-import { sitio, lista, moldear, vigilarErrores } from './sitio.mjs';
+import { sitio, lista, moldear, vigilarErrores, leerZip, tamPNG } from './sitio.mjs';
 
 let S;
 test.beforeAll(async () => {
@@ -153,6 +153,106 @@ test('actualización N → N+1: aviso «Nueva versión», recarga y caché nueva
   expect(estado.app).toContain(`?v=${n1}`);
 });
 
+const esperarSW = page =>
+  page.evaluate(async () => {
+    await navigator.serviceWorker.ready;
+    if (!navigator.serviceWorker.controller)
+      await new Promise(r => navigator.serviceWorker.addEventListener('controllerchange', r, { once: true }));
+  });
+
+test('red colgada: el SW sirve la copia guardada tras el tiempo límite de 3 s', async ({ page }) => {
+  await page.goto(S.url);
+  await lista(page);
+  await esperarSW(page);
+  S.colgarRed(true); // la página nunca responde (pero hay «conexión»)
+  try {
+    const t0 = Date.now();
+    await page.reload({ waitUntil: 'commit', timeout: 30_000 });
+    await lista(page);
+    const ms = Date.now() - t0;
+    expect(ms).toBeGreaterThanOrEqual(2_500); // esperó a la red…
+    expect(ms).toBeLessThan(20_000); // …pero no para siempre
+  } finally {
+    S.colgarRed(false);
+  }
+});
+
+test('caras invertidas: confirm() antes de exportar; «Cancelar» no descarga, «Aceptar» sí', async ({ page }) => {
+  await page.goto(S.url + '?debug');
+  await lista(page);
+  await page.click('#ejemplo');
+  await moldear(page);
+  await page.evaluate(() => {
+    window.__result.report.flips = 3; // simula una malla con 3 caras invertidas
+  });
+  let msg = '';
+  let descargas = 0;
+  page.on('download', () => descargas++);
+  page.once('dialog', d => {
+    msg = d.message();
+    d.dismiss();
+  });
+  await page.click('#dlUsdz');
+  await page.waitForTimeout(1500);
+  expect(msg).toContain('3 caras invertidas');
+  expect(descargas).toBe(0);
+  await expect(page.locator('#go')).toBeEnabled(); // no quedó bloqueado
+  page.once('dialog', d => d.accept());
+  const [dl] = await Promise.all([page.waitForEvent('download'), page.click('#dlUsdz')]);
+  expect(dl.suggestedFilename()).toMatch(/\.usdz$/);
+});
+
+test('descargas OBJ, capas y PNG 2D con contenido correcto', async ({ page }) => {
+  const errs = vigilarErrores(page);
+  await page.goto(S.url + '?debug');
+  await lista(page);
+  await page.click('#ejemplo');
+  await page.fill('#cliente', 'Ana');
+  await page.check('#expMed');
+  await moldear(page);
+  const nV = await page.evaluate(() => window.__result.P.length / 3);
+  const bajar = async sel => {
+    const [d] = await Promise.all([page.waitForEvent('download'), page.click(sel)]);
+    return { nombre: d.suggestedFilename(), buf: fs.readFileSync(await d.path()) };
+  };
+
+  // OBJ + MTL + PNG (+ capas) en un ZIP
+  const obj = await bajar('#dlObj');
+  expect(obj.nombre).toBe('brazo_Ana_OBJ.zip');
+  const zo = leerZip(obj.buf);
+  const o = zo['brazo_Ana/brazo_Ana.obj'].toString('utf8'),
+    mtl = zo['brazo_Ana/brazo_Ana.mtl'].toString('utf8');
+  expect(o).toMatch(/^mtllib brazo_Ana\.mtl$/m);
+  expect(o.match(/^v /gm).length).toBe(nV);
+  expect(o.match(/^f /gm).length).toBeGreaterThan(nV);
+  expect(o).not.toMatch(/NaN|Infinity/);
+  expect(mtl).toMatch(/map_Kd brazo_Ana\.png/);
+  expect(tamPNG(zo['brazo_Ana/brazo_Ana.png'])).not.toBeNull();
+  expect(Object.keys(zo)).toContain('capas/LEEME_capas.txt');
+
+  // Capas PNG: guías de tatuaje y de medición, a la resolución de la textura
+  const capas = await bajar('#dlCapas');
+  expect(capas.nombre).toBe('brazo_Ana_capas.zip');
+  const zc = leerZip(capas.buf);
+  for (const k of ['capas/brazo_Ana_guias.png', 'capas/brazo_Ana_guias_medicion.png']) {
+    const t = tamPNG(zc[k]);
+    expect(t, k).not.toBeNull();
+    expect(t[0], k).toBe(t[1]);
+    expect(t[0], k).toBeGreaterThanOrEqual(1024);
+  }
+  expect(zc['capas/LEEME_capas.txt'].toString('utf8')).toContain('Procreate');
+
+  // PNG 2D
+  await page.click('#btn2D');
+  await page.waitForTimeout(800);
+  const p2 = await bajar('#dl2D');
+  expect(p2.nombre).toMatch(/\.png$/);
+  const info = await page.evaluate(() => window.__last2D);
+  expect(tamPNG(p2.buf)).toEqual([info.w, info.h]);
+  expect(p2.buf.length).toBe(info.n);
+  expect(errs).toEqual([]);
+});
+
 test.describe('iPhone', () => {
   const { defaultBrowserType, ...iphone } = devices['iPhone 15']; // eslint-disable-line no-unused-vars
   test.use(iphone);
@@ -165,5 +265,21 @@ test.describe('iPhone', () => {
     const ta = await page.evaluate(() => document.querySelector('#viewer canvas').style.touchAction);
     expect(ta).toBe('pan-y');
     await expect(page.locator('#guiaInfo')).toContainText('dos dedos');
+    // touchmove con 2 dedos se cancela (no mueve la página); con 1 dedo no (scroll normal)
+    const cancelado = await page.evaluate(() => {
+      const cv = document.querySelector('#viewer canvas');
+      // WebKit no deja construir Touch: evento genérico con «touches» simulado (el manejador sólo mira cuántos hay)
+      const ev = n => {
+        const e = new Event('touchmove', { bubbles: true, cancelable: true });
+        Object.defineProperty(e, 'touches', { value: { length: n } });
+        return e;
+      };
+      const dos = ev(2),
+        uno = ev(1);
+      cv.dispatchEvent(dos);
+      cv.dispatchEvent(uno);
+      return [dos.defaultPrevented, uno.defaultPrevented];
+    });
+    expect(cancelado).toEqual([true, false]);
   });
 });

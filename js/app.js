@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/OrbitControls.js';
-import { zipSync } from '../vendor/fflate.js';
+import { zipSync } from '../vendor/fflate.js?v=6';
 import * as K from './core.js?v=6';
 import { PARTS } from './parts.js?v=6';
 import { View2D } from './view2d.js?v=6';
@@ -404,7 +404,19 @@ function initViewer() {
   });
   applyTouchMode();
   NARROW.addEventListener('change', applyTouchMode);
+  blockMultiTouchScroll(renderer.domElement);
   dbg('__frames', () => frames);
+}
+// Con touch-action: pan-y el navegador podría quedarse un arrastre vertical de dos dedos como scroll;
+// con dos o más dedos el gesto es siempre del modelo (inclinar, girar, zoom), nunca de la página.
+function blockMultiTouchScroll(el) {
+  el.addEventListener(
+    'touchmove',
+    e => {
+      if (e.touches.length > 1) e.preventDefault();
+    },
+    { passive: false },
+  );
 }
 // En el móvil: un dedo hace scroll de la página y dos dedos giran y hacen zoom.
 // Se aplica DESPUÉS de crear OrbitControls, que pone touchAction='none' por su cuenta.
@@ -689,7 +701,7 @@ function showTable(rep, warn) {
   tb.replaceChildren();
   for (const [n, t, v] of rep.rows) {
     const d = v - t,
-      ok = Math.abs(d) <= 0.3,
+      ok = Math.abs(d) <= K.FIT_TOLERANCE,
       tr = tb.insertRow();
     for (const txt of [n, t.toFixed(1), v.toFixed(1), (d >= 0 ? '+' : '') + d.toFixed(2)])
       tr.insertCell().textContent = txt;

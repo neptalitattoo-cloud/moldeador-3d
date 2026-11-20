@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """(CI) Comprueba que el sha256 de la CSP de index.html coincide con el <script type="importmap">.
-   Si editas el importmap sin actualizar el hash, la app se quedaría en blanco."""
-import base64, hashlib, pathlib, re, sys
+Si editas el importmap sin actualizar el hash, la app se quedaría en blanco."""
+
+import base64
+import hashlib
+import pathlib
+import re
+import sys
 
 html = (pathlib.Path(__file__).resolve().parent.parent / 'index.html').read_text(encoding='utf-8')
 m = re.search(r'<script type="importmap">(.*?)</script>', html, re.S)

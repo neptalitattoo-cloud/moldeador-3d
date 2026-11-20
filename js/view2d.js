@@ -221,6 +221,14 @@ export class View2D {
     };
     cv.addEventListener('pointerup', up);
     cv.addEventListener('pointercancel', up);
+    // dos o más dedos: el gesto es del dibujo (mover/zoom), nunca scroll de la página
+    cv.addEventListener(
+      'touchmove',
+      e => {
+        if (e.touches.length > 1) e.preventDefault();
+      },
+      { passive: false },
+    );
     cv.addEventListener(
       'wheel',
       e => {

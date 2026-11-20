@@ -15,7 +15,8 @@ const GOLDEN_PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 test('ejemplo: todas las medidas a ±0,3 cm, sin NaN y sin pliegues', () => {
   assert.ok(fitEj.P.every(Number.isFinite), 'la malla tiene NaN/Infinity');
   assert.equal(fitEj.report.flips, 0);
-  for (const [n, t, v] of fitEj.report.rows) assert.ok(Math.abs(v - t) <= 0.3, `${n}: ${v.toFixed(2)} ≠ ${t}`);
+  for (const [n, t, v] of fitEj.report.rows)
+    assert.ok(Math.abs(v - t) <= K.FIT_TOLERANCE, `${n}: ${v.toFixed(2)} ≠ ${t}`);
 });
 
 test('rechaza entradas imposibles con un mensaje (nunca una malla con NaN)', () => {

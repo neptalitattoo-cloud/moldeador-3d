@@ -4,6 +4,8 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import zlib from 'node:zlib';
+import { execFileSync } from 'node:child_process';
 
 const RAIZ = path.resolve(import.meta.dirname, '..');
 const COPIAR = ['index.html', 'sw.js', 'manifest.webmanifest', 'css', 'js', 'data', 'vendor', 'icons'];
@@ -23,8 +25,15 @@ export async function sitio() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'moldeador-e2e-'));
   for (const f of COPIAR)
     if (fs.existsSync(path.join(RAIZ, f))) fs.cpSync(path.join(RAIZ, f), path.join(dir, f), { recursive: true });
+  const colgadas = new Set();
+  const estado = { colgar: false };
   const srv = http.createServer((req, res) => {
     let p = decodeURIComponent(new URL(req.url, 'http://x').pathname);
+    // «red colgada»: la página (navegación) nunca responde, como una wifi que conecta pero no da datos
+    if (estado.colgar && (p.endsWith('/') || p.endsWith('index.html'))) {
+      colgadas.add(res);
+      return;
+    }
     if (p.endsWith('/')) p += 'index.html';
     const f = path.join(dir, path.normalize(p));
     if (!f.startsWith(dir) || !fs.existsSync(f) || fs.statSync(f).isDirectory()) {
@@ -42,22 +51,22 @@ export async function sitio() {
     dir,
     url: `http://127.0.0.1:${srv.address().port}/`,
     version: () => +fs.readFileSync(path.join(dir, 'sw.js'), 'utf8').match(/moldeador-v(\d+)/)[1],
-    // publica la versión N+1 en la copia (lo mismo que herramientas/version_sw.py)
+    // publica la versión N+1 en la copia con la herramienta real (también actualiza el hash de la CSP)
     subirVersion() {
       const n = this.version() + 1;
-      for (const f of ['sw.js', 'index.html', 'js/app.js', 'js/fit-worker.js', 'js/view2d.js', 'js/parts.js']) {
-        const p = path.join(dir, f);
-        fs.writeFileSync(
-          p,
-          fs
-            .readFileSync(p, 'utf8')
-            .replace(/\?v=\d+/g, `?v=${n}`)
-            .replace(/moldeador-v\d+/g, `moldeador-v${n}`),
-        );
-      }
+      execFileSync('python3', [path.join(RAIZ, 'herramientas', 'version_sw.py'), String(n), '--root', dir]);
       return n;
     },
+    colgarRed(si) {
+      estado.colgar = si;
+      if (!si) {
+        for (const r of colgadas) r.destroy();
+        colgadas.clear();
+      }
+    },
     async cerrar() {
+      this.colgarRed(false);
+      srv.closeAllConnections();
       await new Promise(ok => srv.close(ok));
       fs.rmSync(dir, { recursive: true, force: true });
     },
@@ -80,4 +89,26 @@ export function vigilarErrores(page) {
     if (m.type() === 'error') errs.push(m.text());
   });
   return errs;
+}
+
+// Lee un ZIP (sin compresión o deflate) → { nombre: Buffer }
+export function leerZip(buf) {
+  const out = {};
+  let off = 0;
+  while (buf.readUInt32LE(off) === 0x04034b50) {
+    const metodo = buf.readUInt16LE(off + 8),
+      comp = buf.readUInt32LE(off + 18),
+      n = buf.readUInt16LE(off + 26),
+      x = buf.readUInt16LE(off + 28),
+      d = off + 30 + n + x,
+      datos = buf.subarray(d, d + comp);
+    out[buf.subarray(off + 30, off + 30 + n).toString('utf8')] = metodo === 8 ? zlib.inflateRawSync(datos) : datos;
+    off = d + comp;
+  }
+  return out;
+}
+// PNG válido → [ancho, alto]
+export function tamPNG(b) {
+  if (b.subarray(0, 8).toString('hex') !== '89504e470d0a1a0a' || b.subarray(12, 16).toString() !== 'IHDR') return null;
+  return [b.readUInt32BE(16), b.readUInt32BE(20)];
 }
