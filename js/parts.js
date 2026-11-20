@@ -4,7 +4,7 @@ export const PARTS = {
   brazo_derecho: {
     nombre: 'Brazo derecho',
     data: 'data/brazo_derecho',
-    version: '?v=7',
+    version: '?v=8',
     activo: true,
     largos: [
       ['hombro_codo', '1. Hombro → codo', 32],
@@ -29,13 +29,13 @@ export const PARTS = {
       c_antebrazo: 'Contorno a mitad de camino entre el codo y la muñeca.',
       c_muneca: 'Contorno en la parte más estrecha, justo encima del hueso de la muñeca.',
       largo_mano: 'Del pliegue de la muñeca a la punta del dedo corazón, mano estirada.',
-      ancho_nudillos: 'Ancho de la palma en los nudillos, sin el pulgar.',
+      c_nudillos: 'Cinta alrededor de la mano a la altura de los nudillos, sin el pulgar. Vacío: ≈ 1,04 × muñeca.',
     },
     // Ejemplo cargable con «Cargar ejemplo» (el formulario empieza vacío). Valores del 3.º número = valor de ejemplo.
     ejemplo: {
       cliente: 'Ejemplo',
       largo_mano: '',
-      ancho_nudillos: '',
+      c_nudillos: '',
       tatuajes: [
         ['Tatuaje A', 9, ''],
         ['Tatuaje B', 24, ''],

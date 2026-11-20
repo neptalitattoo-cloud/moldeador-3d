@@ -1,9 +1,11 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/OrbitControls.js';
-import { zipSync } from '../vendor/fflate.js?v=7';
-import * as K from './core.js?v=7';
-import { PARTS } from './parts.js?v=7';
-import { View2D } from './view2d.js?v=7';
+import { zipSync } from '../vendor/fflate.js?v=8';
+import * as K from './core.js?v=8';
+import { PARTS } from './parts.js?v=8';
+import { View2D } from './view2d.js?v=8';
+import { FotoEditor } from './editor.js?v=8';
+import * as FO from './foto.js?v=8';
 
 // ---------- entorno y utilidades ----------
 const $ = id => document.getElementById(id);
@@ -32,7 +34,9 @@ const fitSize = (w, h, max) => {
 };
 const tick = () => new Promise(r => setTimeout(r, 30));
 const BLEED = 6; // px de sangrado alrededor de las islas UV (a 2048 px)
-const SKIN = '#e3c2aa';
+const SKIN_NEUTRAL = '#e3c2aa';
+const SKIN_KEY = 'moldeador.tono';
+let skinColor = SKIN_NEUTRAL; // tono de piel: neutro, del cuentagotas o del selector de color
 const PREVIEW_BG = '#b9a99c';
 const TATTOO_BLUE = '#1e7fd8',
   GUIDE_PINK = '#ff3d9a';
@@ -50,7 +54,7 @@ let userImg = null,
   idxMap = null;
 
 // ---------- formulario ----------
-const MEDIDA_IDS = () => [...part.largos, ...part.contornos].map(([id]) => id).concat('largo_mano', 'ancho_nudillos');
+const MEDIDA_IDS = () => [...part.largos, ...part.contornos].map(([id]) => id).concat('largo_mano', 'c_nudillos');
 function num(id) {
   const s = String($(id).value).trim().replace(',', '.');
   if (!s) return null;
@@ -86,7 +90,7 @@ function buildForm() {
     });
   mk($('largos'), part.largos);
   mk($('contornos'), part.contornos);
-  for (const id of ['largo_mano', 'ancho_nudillos']) {
+  for (const id of ['largo_mano', 'c_nudillos']) {
     const [lo, hi] = K.RANGOS[id];
     $(id).title = `Entre ${lo} y ${hi} cm (opcional)`;
   }
@@ -116,7 +120,7 @@ function loadExample() {
   const ej = part.ejemplo || {};
   for (const [id, , v] of [...part.largos, ...part.contornos]) $(id).value = v;
   $('largo_mano').value = ej.largo_mano ?? '';
-  $('ancho_nudillos').value = ej.ancho_nudillos ?? '';
+  $('c_nudillos').value = ej.c_nudillos ?? '';
   $('cliente').value = ej.cliente || 'Ejemplo';
   $('tatuajes').replaceChildren();
   (ej.tatuajes || []).forEach(t => addTat(...t));
@@ -144,7 +148,7 @@ function addTat(n, d, w) {
   };
   const x = Object.assign(document.createElement('button'), {
     type: 'button',
-    className: 'ghost',
+    className: 'ghost quitar',
     textContent: '✕',
     title: 'Quitar tatuaje',
   });
@@ -168,17 +172,18 @@ function tattoos() {
       d: parseFloat(d.querySelector('.td').value.replace(',', '.')),
       w: parseFloat(d.querySelector('.tw').value.replace(',', '.')),
     }))
-    .filter(t => Number.isFinite(t.d) && t.d > 0 && t.d < 120);
+    .filter(t => Number.isFinite(t.d) && t.d > 0 && t.d < 120)
+    .concat(decals.map(dc => ({ n: dc.name, d: Math.max(0.1, dc.d - dc.alto / 2), w: dc.alto, foto: true })));
 }
 function readInputs() {
   const raw = {},
-    labels = { largo_mano: '9. Largo mano', ancho_nudillos: '10. Ancho nudillos' };
+    labels = { largo_mano: '9. Largo mano', c_nudillos: '10. Contorno nudillos' };
   for (const [id, lab] of [...part.largos, ...part.contornos]) {
     raw[id] = num(id);
     labels[id] = lab;
   }
   raw.largo_mano = num('largo_mano');
-  raw.ancho_nudillos = num('ancho_nudillos');
+  raw.c_nudillos = num('c_nudillos');
   return K.validateInputs(raw, labels);
 }
 const inputsKey = () =>
@@ -222,7 +227,7 @@ function baseLayer() {
     g.lineTo(VT[2 * d] * W, (1 - VT[2 * d + 1]) * H);
     g.closePath();
   }
-  g.fillStyle = g.strokeStyle = SKIN;
+  g.fillStyle = g.strokeStyle = skinColor;
   g.lineJoin = 'round';
   g.lineWidth = (2 * BLEED * W) / 2048;
   g.fill();
@@ -233,28 +238,305 @@ let baseCache = null,
   tatCache = null;
 function getBaseLayer() {
   const [W, H] = texSize();
-  if (!baseCache || baseCache.width !== W || baseCache.height !== H || baseCache.src !== userImg) {
+  if (
+    !baseCache ||
+    baseCache.width !== W ||
+    baseCache.height !== H ||
+    baseCache.src !== userImg ||
+    baseCache.skin !== skinColor
+  ) {
     release(baseCache);
     baseCache = baseLayer();
     baseCache.src = userImg;
+    baseCache.skin = skinColor;
   }
   return baseCache;
 }
+// capa de tatuaje = PNG subido (si hay) + recortes de la foto colocados sobre el brazo
 function getTattooLayer() {
-  if (!tatImg) {
+  if (!tatImg && !decals.length) {
     release(tatCache);
     tatCache = null;
     return null;
   }
-  const [W, H] = texSize();
-  if (!tatCache || tatCache.width !== W || tatCache.height !== H || tatCache.src !== tatImg) {
-    release(tatCache);
-    tatCache = mkCanvas(W, H);
-    tatCache.getContext('2d').drawImage(tatImg, 0, 0, W, H);
-    tatCache.src = tatImg;
+  const [W, H] = texSize(),
+    P = result ? result.P : base.V0;
+  if (
+    !tatCache ||
+    tatCache.width !== W ||
+    tatCache.height !== H ||
+    tatCache.src !== tatImg ||
+    tatCache.ver !== decalVer ||
+    tatCache.P !== P
+  ) {
+    if (!tatCache || tatCache.width !== W || tatCache.height !== H) {
+      release(tatCache);
+      tatCache = mkCanvas(W, H);
+    }
+    const g = tatCache.getContext('2d');
+    g.clearRect(0, 0, W, H);
+    if (tatImg) g.drawImage(tatImg, 0, 0, W, H);
+    for (const dc of decals) drawDecal(g, W, H, dc);
+    Object.assign(tatCache, { src: tatImg, ver: decalVer, P });
   }
   return tatCache;
 }
+
+// ---------- recortes de la foto colocados sobre el brazo ----------
+let decals = [],
+  decalVer = 0,
+  decalSeq = 0,
+  chartCache = null,
+  moving = null; // recorte que se está moviendo en la vista 2D
+function chart() {
+  const P = result ? result.P : base.V0;
+  if (!chartCache || chartCache.P !== P) {
+    const tape = result ? result.report.tape : K.tapeFn(base, base.V0);
+    chartCache = { P, c: FO.surfaceChart(base, P, tape) };
+  }
+  return chartCache.c;
+}
+const decalSize = dc => [dc.alto * (dc.canvas.width / dc.canvas.height), dc.alto];
+function decalTris(dc) {
+  const [Wc, Hc] = decalSize(dc);
+  return FO.decalTriangles(base, FO.decalCoords(chart(), dc), Wc, Hc);
+}
+function drawDecal(g, W, H, dc) {
+  const [Wc, Hc] = decalSize(dc),
+    img = dc.canvas,
+    iw = img.width,
+    ih = img.height,
+    e = 0.8; // px: se agranda cada triángulo para que no queden rendijas
+  g.save();
+  g.globalAlpha = dc.opac ?? 1;
+  for (const t of decalTris(dc)) {
+    const p = t.p.map(([x, y]) => [(x / Wc + 0.5) * iw, (y / Hc + 0.5) * ih]);
+    const xs = p.map(q => q[0]),
+      ys = p.map(q => q[1]);
+    const sx = Math.max(0, Math.floor(Math.min(...xs)) - 2),
+      sy = Math.max(0, Math.floor(Math.min(...ys)) - 2),
+      ex = Math.min(iw, Math.ceil(Math.max(...xs)) + 2),
+      ey = Math.min(ih, Math.ceil(Math.max(...ys)) + 2);
+    if (ex <= sx || ey <= sy) continue;
+    const q = t.q.map(([u, v]) => [u * W, (1 - v) * H]);
+    const A = FO.affine3(p, q);
+    if (!A) continue;
+    const cx = (q[0][0] + q[1][0] + q[2][0]) / 3,
+      cy = (q[0][1] + q[1][1] + q[2][1]) / 3;
+    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.beginPath();
+    q.forEach(([x, y], k) => {
+      const l = Math.hypot(x - cx, y - cy) || 1;
+      g[k ? 'lineTo' : 'moveTo'](x + ((x - cx) / l) * e, y + ((y - cy) / l) * e);
+    });
+    g.closePath();
+    g.save();
+    g.clip();
+    g.setTransform(...A);
+    g.drawImage(img, sx, sy, ex - sx, ey - sy, sx, sy, ex - sx, ey - sy);
+    g.restore();
+  }
+  g.restore();
+}
+let decalRaf = 0;
+function decalsChanged() {
+  decalVer++;
+  if (decalRaf) return;
+  decalRaf = requestAnimationFrame(() => {
+    decalRaf = 0;
+    paintTexture();
+  });
+}
+const LADO_TXT = { exterior: 'Exterior', delante: 'Delante', interior: 'Interior', detras: 'Detrás' };
+function addDecal({ canvas, name, alto }) {
+  const dc = {
+    id: ++decalSeq,
+    name: name || `tatuaje ${decalSeq}`,
+    canvas,
+    alto: +alto.toFixed(1),
+    d: Math.round(Math.max(alto / 2 + 1, 12)),
+    ang: 0,
+    rot: 0,
+  };
+  decals.push(dc);
+  renderDecalRow(dc);
+  decalsChanged();
+  status(`Recorte «${dc.name}» añadido en el exterior del brazo: colócalo en «Foto del brazo».`);
+  return dc;
+}
+function renderDecalRow(dc) {
+  const row = document.createElement('div');
+  row.className = 'decal';
+  row.dataset.id = dc.id;
+  const th = mkCanvas(112, 112);
+  const k = Math.min(112 / dc.canvas.width, 112 / dc.canvas.height);
+  th.getContext('2d').drawImage(
+    dc.canvas,
+    (112 - dc.canvas.width * k) / 2,
+    (112 - dc.canvas.height * k) / 2,
+    dc.canvas.width * k,
+    dc.canvas.height * k,
+  );
+  const lab = (txt, el, cls) => {
+    const l = document.createElement('label');
+    if (cls) l.className = cls;
+    l.append(txt, el);
+    return l;
+  };
+  const numIn = (val, cls, onv) => {
+    const i = Object.assign(document.createElement('input'), {
+      type: 'text',
+      inputMode: 'decimal',
+      autocomplete: 'off',
+      className: cls,
+      value: String(val).replace('.', ','),
+    });
+    i.addEventListener('input', () => {
+      const v = Number(i.value.trim().replace(',', '.'));
+      if (Number.isFinite(v)) onv(v);
+    });
+    return i;
+  };
+  const nameIn = Object.assign(document.createElement('input'), { type: 'text', value: dc.name, className: 'dn' });
+  nameIn.addEventListener('input', () => {
+    dc.name = nameIn.value.trim() || 'tatuaje';
+    paintTexture();
+  });
+  const dIn = numIn(dc.d, 'dd', v => {
+    if (v > 0 && v < 120) {
+      dc.d = v;
+      decalsChanged();
+    }
+  });
+  const aIn = numIn(dc.alto, 'da', v => {
+    if (v > 0.5 && v < 80) {
+      dc.alto = v;
+      decalsChanged();
+    }
+  });
+  const lado = document.createElement('select');
+  lado.className = 'dl';
+  for (const [k2, t] of Object.entries(LADO_TXT)) lado.add(new Option(t, k2));
+  lado.add(new Option('Otro ángulo', 'otro'));
+  const ang = Object.assign(document.createElement('input'), { type: 'range', min: -180, max: 180, step: 5 });
+  ang.className = 'dang';
+  const rot = Object.assign(document.createElement('input'), { type: 'range', min: -180, max: 180, step: 5 });
+  rot.className = 'drot';
+  const sync = () => {
+    ang.value = dc.ang;
+    rot.value = dc.rot;
+    const hit = Object.entries(FO.LADOS).find(([, a]) => Math.abs(((dc.ang - a + 540) % 360) - 180) < 1);
+    lado.value = hit ? hit[0] : 'otro';
+    dIn.value = String(+dc.d.toFixed(1)).replace('.', ',');
+    aIn.value = String(+dc.alto.toFixed(1)).replace('.', ',');
+  };
+  dc.sync = sync;
+  lado.onchange = () => {
+    if (lado.value in FO.LADOS) dc.ang = FO.LADOS[lado.value];
+    sync();
+    decalsChanged();
+  };
+  ang.oninput = () => {
+    dc.ang = +ang.value;
+    sync();
+    decalsChanged();
+  };
+  rot.oninput = () => {
+    dc.rot = +rot.value;
+    decalsChanged();
+  };
+  const mover = Object.assign(document.createElement('button'), {
+    type: 'button',
+    className: 'ghost mover',
+    textContent: '✋ Mover en 2D',
+  });
+  mover.setAttribute('aria-pressed', 'false');
+  mover.onclick = () => setMoving(moving === dc ? null : dc);
+  const x = Object.assign(document.createElement('button'), {
+    type: 'button',
+    className: 'ghost quitar',
+    textContent: '✕',
+    title: 'Quitar recorte',
+  });
+  x.setAttribute('aria-label', `Quitar ${dc.name}`);
+  x.onclick = () => {
+    if (moving === dc) setMoving(null);
+    decals = decals.filter(o => o !== dc);
+    row.remove();
+    decalsChanged();
+  };
+  row.append(
+    th,
+    lab('Nombre', nameIn, 'g-nm'),
+    x,
+    lab('Desde hombro (centro, cm)', dIn, 'g-dd'),
+    lab('Alto (cm)', aIn, 'g-al'),
+    lab('Lado', lado, 'g-ld'),
+    mover,
+    lab('Ángulo alrededor del brazo', ang, 'g-ang'),
+    lab('Giro', rot, 'g-rot'),
+  );
+  $('decals').append(row);
+  sync();
+}
+function setMoving(dc) {
+  moving = dc;
+  document.querySelectorAll('.decal .mover').forEach(b => {
+    b.setAttribute('aria-pressed', String(!!dc && b.closest('.decal').dataset.id === String(dc.id)));
+  });
+  if (dc) {
+    if (!mode2d) set2D(true);
+    v2d.setMode('tex');
+    document.querySelectorAll('#seg2d button').forEach(b => b.setAttribute('aria-pressed', b.dataset.m === 'tex'));
+    v2d.setTouchScroll(false);
+    status(`Mueve «${dc.name}» arrastrando en la vista 2D; pellizca para cambiar el tamaño y gira con dos dedos.`);
+  } else v2d.setTouchScroll(NARROW.matches);
+}
+// arrastre en la vista 2D (píxeles de la capa) → cm sobre el brazo
+const decalEdit = {
+  active: () => !!moving && mode2d && v2d.mode === 'tex',
+  drag(dx, dy, Wl, Hl) {
+    const dc = moving;
+    const hit = FO.decalPointUV(decalTris(dc));
+    if (!hit) return;
+    const A = FO.affine3(
+      hit.tri.p,
+      hit.tri.q.map(([u, v]) => [u * Wl, (1 - v) * Hl]),
+    ); // cm → px de la capa
+    if (!A) return;
+    const [a, b, c, d] = A,
+      det = a * d - b * c;
+    const x = (d * dx - c * dy) / det,
+      y = (-b * dx + a * dy) / det; // cm en el marco del tatuaje (girado)
+    const r = (-dc.rot * Math.PI) / 180,
+      co = Math.cos(r),
+      si = Math.sin(r);
+    const xa = co * x + si * y,
+      ya = -si * x + co * y; // cm en el marco del brazo
+    const ch = chart(),
+      rr = hit.tri.i.reduce((s, i) => s + ch.r[i], 0) / 3;
+    dc.d = Math.min(119, Math.max(0.5, dc.d + ya));
+    dc.ang = ((((dc.ang + (xa / (ch.hand * rr)) * (180 / Math.PI) + 540) % 360) + 360) % 360) - 180;
+    dc.sync();
+    decalsChanged();
+  },
+  pinch(scale, dRot) {
+    const dc = moving;
+    dc.alto = Math.min(80, Math.max(0.5, dc.alto * scale));
+    const hit = FO.decalPointUV(decalTris(dc));
+    let sg = 1;
+    if (hit) {
+      const A = FO.affine3(
+        hit.tri.p,
+        hit.tri.q.map(([u, v]) => [u, 1 - v]),
+      );
+      if (A && A[0] * A[3] - A[1] * A[2] < 0) sg = -1;
+    }
+    dc.rot = ((((dc.rot + sg * dRot + 540) % 360) + 360) % 360) - 180;
+    dc.sync();
+    decalsChanged();
+  },
+};
 function guidesLayer() {
   const [W, H] = texSize(),
     c = mkCanvas(W, H);
@@ -328,13 +610,15 @@ const toPNG = c =>
   );
 async function basePNG() {
   // capa base que va dentro del USDZ/OBJ
-  const src = getBaseLayer();
-  if (!$('expGuias').checked) return toPNG(src);
+  const src = getBaseLayer(),
+    tat = $('fundirTat').checked ? getTattooLayer() : null;
+  if (!$('expGuias').checked && !tat) return toPNG(src);
   const [W, H] = texSize(),
     c = mkCanvas(W, H),
     g = c.getContext('2d');
   g.drawImage(src, 0, 0);
-  drawGuides(g, W, H);
+  if (tat) g.drawImage(tat, 0, 0, W, H); // tatuajes fundidos en la piel
+  if ($('expGuias').checked) drawGuides(g, W, H);
   try {
     return await toPNG(c);
   } finally {
@@ -413,7 +697,7 @@ function blockMultiTouchScroll(el) {
   el.addEventListener(
     'touchmove',
     e => {
-      if (e.touches.length > 1) e.preventDefault();
+      if (e.touches.length > 1 && e.cancelable) e.preventDefault();
     },
     { passive: false },
   );
@@ -513,7 +797,7 @@ const GUIDE_NUM = {
   c_antebrazo: 7,
   c_muneca: 8,
   largo_mano: 9,
-  ancho_nudillos: 10,
+  c_nudillos: 10,
 };
 const GUIDE_TXT = {
   hombro_codo: 'Hombro → codo',
@@ -525,7 +809,7 @@ const GUIDE_TXT = {
   c_antebrazo: 'Contorno mitad antebrazo',
   c_muneca: 'Contorno muñeca',
   largo_mano: 'Largo mano',
-  ancho_nudillos: 'Ancho nudillos',
+  c_nudillos: 'Contorno nudillos',
 };
 const COL = 0xff3d9a,
   HI = 0xffd400;
@@ -618,7 +902,7 @@ function buildGuides(P) {
   }
   if (hg) {
     addItem('largo_mano', [tube([hg.wc, hg.tip], false, 0.1), ball(hg.wc, 0.4), ball(hg.tip, 0.4)], hg.tip, true);
-    addItem('ancho_nudillos', [tube(hg.ring, true)], hg.ring[0]);
+    addItem('c_nudillos', [tube(hg.ring, true)], hg.ring[0]);
   }
   refreshGuides();
 }
@@ -727,7 +1011,7 @@ let workerInit = null;
 function startWorker(meta, buf) {
   workerInit = [meta, buf];
   try {
-    worker = new Worker(new URL('./fit-worker.js?v=7', import.meta.url), { type: 'module' });
+    worker = new Worker(new URL('./fit-worker.js?v=8', import.meta.url), { type: 'module' });
   } catch {
     worker = null;
     return;
@@ -1059,7 +1343,7 @@ const ROW_ID = [
   'c_antebrazo',
   'c_muneca',
   'largo_mano',
-  'ancho_nudillos',
+  'c_nudillos',
 ];
 function set2D(on) {
   mode2d = on;
@@ -1134,7 +1418,30 @@ function init2D() {
       refreshGuides();
     }
   };
+  v2d.editHook = decalEdit;
   dbg('__v2d', v2d);
+  dbg('__decals', () => decals);
+  dbg('__cmToUV', (d, ang) => FO.cmToUV(base, chart(), d, ang));
+  // cámara mirando el brazo desde un lado (0 exterior, 90 delante) (para capturas y pruebas)
+  dbg('__mirar', ang => {
+    const m = base.meta,
+      o = m.dir_outer || [-1, 0, 0],
+      f = (m.dir_back || [0, 0, -1]).map(v => -v),
+      a = (ang * Math.PI) / 180,
+      dist = camera.position.distanceTo(controls.target);
+    const dir = new THREE.Vector3(...o.map((v, c) => Math.cos(a) * v + Math.sin(a) * f[c])).normalize();
+    camera.position.copy(controls.target).addScaledVector(dir, dist);
+    controls.update();
+    requestRender();
+  });
+  // alfa y color de la capa de tatuaje en (u, v) (para las pruebas)
+  dbg('__tatPixel', (u, v) => {
+    const t = getTattooLayer();
+    if (!t) return null;
+    const x = Math.min(t.width - 1, Math.floor(u * t.width)),
+      y = Math.min(t.height - 1, Math.floor((1 - v) * t.height));
+    return Array.from(t.getContext('2d').getImageData(x, y, 1, 1).data);
+  });
 }
 
 // ---------- imágenes subidas ----------
@@ -1158,6 +1465,60 @@ function loadImageFile(file, onOk) {
     status('⚠ No se pudo leer la imagen (¿dañada o en HEIC? Usa PNG o JPG).');
   };
   img.src = url;
+}
+// ---------- foto del brazo: editor, tono de piel ----------
+let editor = null,
+  lastPhoto = null;
+function setSkin(hex, save = true) {
+  if (!FO.rgbOf(hex)) return;
+  skinColor = hex.toLowerCase();
+  $('tono').value = skinColor;
+  $('tonoHex').textContent = skinColor === SKIN_NEUTRAL ? `${skinColor} (neutro)` : skinColor;
+  if (save)
+    try {
+      if (skinColor === SKIN_NEUTRAL) localStorage.removeItem(SKIN_KEY);
+      else localStorage.setItem(SKIN_KEY, skinColor);
+    } catch {
+      /* modo privado: no se guarda */
+    }
+  paintTexture();
+}
+function wireFoto() {
+  const toCm = t => {
+    const v = Number(String(t).trim().replace(',', '.'));
+    return Number.isFinite(v) ? v : NaN;
+  };
+  editor = new FotoEditor({
+    toCm,
+    onTone: hex => {
+      setSkin(hex);
+      status(`Tono de piel ${hex} aplicado. Puedes afinarlo con «Tono de piel».`);
+    },
+    onCut: c => addDecal(c),
+  });
+  const open = e => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    loadImageFile(f, img => {
+      lastPhoto = img;
+      $('fotoEditar').hidden = false;
+      editor.open(img);
+    });
+  };
+  $('fotoCam').onchange = open;
+  $('fotoGal').onchange = open;
+  $('fotoEditar').onclick = () => lastPhoto && editor.open(lastPhoto);
+  $('tono').addEventListener('input', () => setSkin($('tono').value));
+  $('tonoReset').onclick = () => setSkin(SKIN_NEUTRAL);
+  let saved = null;
+  try {
+    saved = localStorage.getItem(SKIN_KEY);
+  } catch {
+    saved = null;
+  }
+  if (saved) setSkin(saved, false);
+  dbg('__editor', editor);
 }
 function wireUploads() {
   $('tex').onchange = e => {
@@ -1244,6 +1605,7 @@ async function start() {
   buildForm();
   initViewer();
   wireUploads();
+  wireFoto();
   $('form').onsubmit = run;
   $('dlUsdz').onclick = exporting(dlUsdz);
   $('dlObj').onclick = exporting(dlObj);

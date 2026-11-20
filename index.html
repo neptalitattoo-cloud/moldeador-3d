@@ -2,15 +2,15 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-5c2AKut7knK2LLMZM2G+H/dU8UBfBuWq3LDsb6IpqmM='; worker-src 'self'; img-src 'self' blob: data:; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-MktswifMa6I5FWYrkb2HpOY9/zTOZJhIO4VcJBYyrDI='; worker-src 'self'; img-src 'self' blob: data:; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#1d1b1a">
 <title>Moldeador 3D · medidas del cliente</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="css/app.css?v=7">
-<script type="importmap">{"imports":{"three":"./vendor/three.module.min.js?v=7","three/addons/OrbitControls.js":"./vendor/OrbitControls.js?v=7"}}</script>
+<link rel="stylesheet" href="css/app.css?v=8">
+<script type="importmap">{"imports":{"three":"./vendor/three.module.min.js?v=8","three/addons/OrbitControls.js":"./vendor/OrbitControls.js?v=8"}}</script>
 </head>
 <body>
 <header>
@@ -37,13 +37,29 @@
       </fieldset>
       <fieldset><legend>Mano <small>(opcional)</small></legend><div class="grid">
         <label>9. Largo mano<input type="text" inputmode="decimal" autocomplete="off" id="largo_mano" placeholder="auto"><small class="help" data-for="largo_mano"></small></label>
-        <label>10. Ancho nudillos<input type="text" inputmode="decimal" autocomplete="off" id="ancho_nudillos" placeholder="auto"><small class="help" data-for="ancho_nudillos"></small></label></div>
-        <p class="hint">Si lo dejas vacío: largo = 0,79 × antebrazo, ancho = 0,45 × largo, contorno nudillos ≈ 1,04 × muñeca.</p></fieldset>
+        <label>10. Contorno nudillos<input type="text" inputmode="decimal" autocomplete="off" id="c_nudillos" placeholder="auto"><small class="help" data-for="c_nudillos"></small></label></div>
+        <p class="hint">Si lo dejas vacío: largo = 0,79 × antebrazo y contorno de nudillos ≈ 1,04 × muñeca. El 10 es un contorno: la cinta rodea la mano por los nudillos (sin el pulgar), igual que el anillo amarillo del 3D.</p></fieldset>
+      <fieldset id="fotoSet"><legend>Foto del brazo <small>(tono de piel y tatuajes)</small></legend>
+        <p class="hint">Haz una foto del brazo con buena luz (o elige una de la galería). En el editor: 💧 toca la piel para tomar el tono, ✂️ rodea cada tatuaje con el dedo para recortarlo y luego colócalo aquí abajo.</p>
+        <div class="fotoBtns">
+          <label class="btnfile primary">📷 Hacer foto<input type="file" id="fotoCam" accept="image/*" capture="environment"></label>
+          <label class="btnfile">🖼️ Elegir foto<input type="file" id="fotoGal" accept="image/*"></label>
+          <button type="button" id="fotoEditar" class="ghost" hidden>✏️ Volver al editor</button>
+        </div>
+        <div class="tono">
+          <label class="tonoLab">Tono de piel <input type="color" id="tono" value="#e3c2aa"></label>
+          <span id="tonoHex" class="hint">#e3c2aa (neutro)</span>
+          <button type="button" id="tonoReset" class="ghost small">Piel neutra</button>
+        </div>
+        <div id="decals"></div>
+        <label class="check"><input type="checkbox" id="fundirTat"> Fundir los tatuajes en la capa base del USDZ/OBJ (si no, van solo en el PNG de tatuaje)</label>
+      </fieldset>
       <fieldset><legend>Capas</legend>
         <label class="file">Capa de tatuaje PNG (transparente, sobre el UV original)<input type="file" id="tat" accept="image/png"></label>
         <button type="button" id="tatReset" class="ghost" disabled>Quitar capa de tatuaje</button>
         <span id="tatInfo" class="hint">Sin capa de tatuaje</span>
-        <label class="file mt8">Capa base propia (opcional, sustituye a la piel neutra)<input type="file" id="tex" accept="image/png,image/jpeg"></label>
+        <label class="file mt8">Capa base propia (avanzado: una textura ya pintada sobre el mapa UV, no una foto normal)<input type="file" id="tex" accept="image/png,image/jpeg"></label>
+        <p class="hint">Para usar una foto del brazo (tono de piel o tatuajes) usa «Foto del brazo» arriba: una foto normal estirada sobre el mapa UV no encaja.</p>
         <button type="button" id="texReset" class="ghost" disabled>Volver a piel neutra</button>
         <span id="texInfo" class="hint">Piel neutra solo dentro de la silueta del brazo y las manos</span>
         <p class="hint">Procreate importa una sola capa base por modelo: la piel va dentro del USDZ y el tatuaje y las guías se descargan como PNG para insertarlos como capas nuevas (ver instrucciones en el ZIP).</p></fieldset>
@@ -83,10 +99,42 @@
     <p class="hint">Vista 2D: «Textura plana» muestra el mapa UV como en Procreate (Acciones › 3D › Mostrar textura 2D) con la piel, tu capa de tatuaje, las guías azules y, si las activas, las guías rosas de medición. «Siluetas» dibuja el brazo ajustado de frente, espalda, interior y exterior con las medidas en cm y una escala de 10 cm, para imprimir como referencia. Arrastra para mover, pellizca o usa la rueda para hacer zoom y toca dos veces para encajar.</p>
   </section>
 </main>
+<div id="editor" class="editor" role="dialog" aria-modal="true" aria-label="Editor de la foto del brazo" hidden>
+  <div class="ed-top">
+    <div id="edTools" class="seg" role="group" aria-label="Herramienta">
+      <button type="button" data-t="gotas" aria-pressed="true">💧 Cuentagotas</button><button type="button" data-t="lazo" aria-pressed="false">✂️ Recortar</button><button type="button" data-t="medir" aria-pressed="false">📏 Medir</button><button type="button" data-t="mover" aria-pressed="false">✋ Mover</button>
+    </div>
+    <span class="ed-sp"></span>
+    <button type="button" id="edEncajar" class="ghost small">⤢ Encajar</button>
+    <button type="button" id="edListo" class="primary">Listo</button>
+  </div>
+  <div class="ed-stage"><canvas id="edCanvas"></canvas></div>
+  <div class="ed-panel">
+    <div data-p="gotas">
+      <span id="edSwatch" class="swatch"></span>
+      <span id="edHex" class="hint">Toca la piel en una zona con buena luz.</span>
+      <button type="button" id="edUsarTono" class="primary" disabled>Usar este tono</button>
+    </div>
+    <div data-p="lazo" hidden>
+      <span class="hint">Rodea el tatuaje con el dedo; al soltar se cierra.</span>
+      <label>Nombre <input type="text" id="edNombre" maxlength="30" placeholder="p. ej. rosa" autocomplete="off"></label>
+      <label>Alto del tatuaje (cm) <input type="text" id="edAlto" inputmode="decimal" autocomplete="off" placeholder="obligatorio"></label>
+      <label>Borde suave <input type="range" id="edBorde" min="0" max="30" value="8"></label>
+      <button type="button" id="edBorrar" class="ghost">Borrar trazo</button>
+      <button type="button" id="edRecortar" class="primary" disabled>Añadir recorte</button>
+    </div>
+    <div data-p="medir" hidden>
+      <span class="hint">Opcional: traza una línea entre dos puntos que conozcas (p. ej. punta del hombro → codo) y escribe cuánto mide.</span>
+      <label>Esa línea mide (cm) <input type="text" id="edMideCm" inputmode="decimal" autocomplete="off"></label>
+      <span id="edEscala" class="hint">Sin calibrar: escribe el alto a mano.</span>
+    </div>
+    <div data-p="mover" hidden><span class="hint">Arrastra para mover la foto; pellizca o usa la rueda para acercar. Con dos dedos también se mueve en cualquier herramienta.</span></div>
+  </div>
+</div>
 <div id="update" class="toast" role="status" aria-live="polite" hidden>
   Nueva versión del Moldeador disponible. <button type="button" id="updBtn" class="primary">Recargar</button>
   <button type="button" id="updLater" class="ghost">Luego</button>
 </div>
-<script type="module" src="js/app.js?v=7"></script>
+<script type="module" src="js/app.js?v=8"></script>
 </body>
 </html>

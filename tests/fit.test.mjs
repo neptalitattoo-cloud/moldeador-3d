@@ -21,14 +21,15 @@ test('ejemplo: todas las medidas a ±0,3 cm, sin NaN y sin pliegues', () => {
 
 test('rechaza entradas imposibles con un mensaje (nunca una malla con NaN)', () => {
   for (const x of [
-    { ancho_nudillos: -8 },
+    { c_nudillos: -8 },
     { largo_mano: -1 },
     { largo_mano: 200 },
     { c_muneca: NaN },
     { hombro_codo: 0 },
     { c_axila: Infinity },
     { hombro_muneca: 20 },
-    { largo_mano: 12, ancho_nudillos: 14 },
+    { c_nudillos: 14 }, // contorno, no ancho: menos de 15 cm es imposible
+    { c_nudillos: 40 },
   ])
     assert.throws(() => K.fit(base, { ...EJ, ...x }), Error, JSON.stringify(x));
 });
@@ -128,8 +129,9 @@ test('exportar con NaN lanza error', () => {
 
 test('extremos válidos de la mano y del brazo: resultado finito', () => {
   for (const x of [
-    { largo_mano: 10, ancho_nudillos: 4 },
-    { largo_mano: 30, ancho_nudillos: 15 },
+    { largo_mano: 10, c_nudillos: 15 },
+    { largo_mano: 30, c_nudillos: 32 },
+    { c_nudillos: 21 }, // 21 cm: antes se rechazaba al leerse como «ancho»
     { c_muneca: 14, c_antebrazo: 22 },
     { hombro_codo: 28, codo_muneca: 22, hombro_muneca: 50 },
   ]) {

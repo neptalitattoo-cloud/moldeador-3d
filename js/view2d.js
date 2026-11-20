@@ -1,6 +1,6 @@
 // Vista 2D: (a) textura plana con capas y guías, (b) siluetas ortográficas del brazo ajustado con medidas.
 // Zoom con pellizco / rueda, arrastrar para mover, doble toque para encajar.
-import { dot, cross, norm } from './core.js?v=7';
+import { dot, cross, norm } from './core.js?v=8';
 const PINK = '#ff3d9a',
   PINK_D = '#d81b72',
   HI = '#ffc400',
@@ -22,7 +22,7 @@ const SHORT = {
   c_antebrazo: 'Antebrazo',
   c_muneca: 'Muñeca',
   largo_mano: 'Largo mano',
-  ancho_nudillos: 'Nudillos',
+  c_nudillos: 'Nudillos',
 };
 const fmt = v => (v == null || !isFinite(v) ? '' : v.toFixed(1).replace('.', ',') + ' cm');
 
@@ -184,6 +184,26 @@ export class View2D {
         cur = xy(e);
       P.set(e.pointerId, cur);
       moved += Math.hypot(cur[0] - prev[0], cur[1] - prev[1]);
+      const editing = this.editHook && this.editHook.active();
+      if (P.size === 1 && editing) {
+        // modo «Mover en 2D»: un dedo/ratón mueve el tatuaje (en píxeles de la capa)
+        const L = this.layers[0];
+        if (L && L.width)
+          this.editHook.drag((cur[0] - prev[0]) / this.v.s, (cur[1] - prev[1]) / this.v.s, L.width, L.height);
+        return;
+      }
+      if (P.size === 2 && editing) {
+        const [a, b] = [...P.values()],
+          dist = Math.hypot(a[0] - b[0], a[1] - b[1]),
+          ang = (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI;
+        if (last && last.ang != null) {
+          let dr = ang - last.ang;
+          dr = ((dr + 540) % 360) - 180;
+          this.editHook.pinch(dist / last.dist, dr);
+        }
+        last = { dist, ang, mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] };
+        return;
+      }
       if (P.size === 1) {
         if (this.touchScroll && e.pointerType === 'touch') return; // en el móvil un dedo hace scroll de la página
         this.v.tx += cur[0] - prev[0];
@@ -225,7 +245,7 @@ export class View2D {
     cv.addEventListener(
       'touchmove',
       e => {
-        if (e.touches.length > 1) e.preventDefault();
+        if (e.touches.length > 1 && e.cancelable) e.preventDefault();
       },
       { passive: false },
     );
@@ -632,11 +652,7 @@ export class View2D {
         g.font = font(700, 0.95);
         g.fillText(SHORT[id], tx + side * 0.95 * ppcm, ty - 0.5 * ppcm);
         g.font = font(400, 0.95);
-        g.fillText(
-          vals[id] != null ? fmt(vals[id]) + (id === 'ancho_nudillos' ? ' ancho' : '') : '—',
-          tx + side * 0.95 * ppcm,
-          ty + 0.6 * ppcm,
-        );
+        g.fillText(vals[id] != null ? fmt(vals[id]) : '—', tx + side * 0.95 * ppcm, ty + 0.6 * ppcm);
         g.globalAlpha = 1;
       };
       // contornos (derecha)
@@ -651,7 +667,7 @@ export class View2D {
         label(id, v.px(best), 1, col);
       }
       if (hg) {
-        let col = sty('ancho_nudillos');
+        let col = sty('c_nudillos');
         poly(hg.ring, true, () =>
           hg.ring.reduce(
             (s, q) => [s[0] + q[0] / hg.ring.length, s[1] + q[1] / hg.ring.length, s[2] + q[2] / hg.ring.length],
@@ -660,7 +676,7 @@ export class View2D {
         );
         let best = hg.ring[0];
         for (const q of hg.ring) if (dot(q, v.right) > dot(best, v.right)) best = q;
-        label('ancho_nudillos', v.px(best), 1, col);
+        label('c_nudillos', v.px(best), 1, col);
         col = sty('largo_mano');
         g.setLineDash([0.3 * ppcm, 0.2 * ppcm]);
         g.beginPath();

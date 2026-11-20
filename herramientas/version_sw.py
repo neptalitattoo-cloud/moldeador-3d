@@ -19,7 +19,14 @@ import re
 import subprocess
 import sys
 
-CON_VERSION = ['sw.js', 'index.html', 'js/app.js', 'js/fit-worker.js', 'js/view2d.js', 'js/parts.js']
+CON_VERSION_FIJOS = ['sw.js', 'index.html']
+
+
+def con_version(raiz):
+    # todos los módulos de js/ (los nuevos también) llevan ?v=N en sus importaciones
+    return CON_VERSION_FIJOS + sorted(str(p.relative_to(raiz)) for p in (raiz / 'js').glob('*.js'))
+
+
 RE_V = re.compile(r'\?v=(\d+)')
 RE_CACHE = re.compile(r'moldeador-v(\d+)')
 RE_IMPORTMAP = re.compile(r'<script type="importmap">(.*?)</script>', re.S)
@@ -28,7 +35,7 @@ RE_CSP_HASH = re.compile(r"'sha256-[A-Za-z0-9+/=]+'")
 
 def versiones(raiz):
     vs = set()
-    for f in CON_VERSION:
+    for f in con_version(raiz):
         t = (raiz / f).read_text(encoding='utf-8')
         vs |= set(RE_V.findall(t)) | set(RE_CACHE.findall(t))
     return vs
@@ -69,7 +76,7 @@ def guardado(raiz):
 
 
 def escribir(raiz, n):
-    for f in CON_VERSION:
+    for f in con_version(raiz):
         p = raiz / f
         t = p.read_text(encoding='utf-8')
         t = RE_V.sub(f'?v={n}', t)
@@ -109,6 +116,8 @@ def check_git(raiz, base):
     v_head = version_actual(raiz)
     cambiados = set(git('diff', '--name-only', base, 'HEAD').stdout.split())
     tocados = sorted(cambiados & set(precacheados((raiz / 'sw.js').read_text(encoding='utf-8'))))
+    if v_base and v_head < int(v_base.group(1)):
+        sys.exit(f'La versión bajó respecto a {base} ({v_base.group(1)} → {v_head}): las versiones sólo pueden subir.')
     if tocados and v_base and int(v_base.group(1)) == v_head:
         sys.exit(
             f'Cambiaron archivos precacheados ({", ".join(tocados)}) respecto a {base} y la versión sigue en {v_head}: '
@@ -142,7 +151,7 @@ def main(argv):
             f'con archivos viejos. Usa  python3 herramientas/version_sw.py {cur + 1}  (o --force si sabes lo que haces).'
         )
     escribir(raiz, n)
-    print('versión', n, 'escrita en', ', '.join(CON_VERSION), '+ CSP del importmap + herramientas/.version_hash')
+    print('versión', n, 'escrita en', ', '.join(con_version(raiz)), '+ CSP del importmap + herramientas/.version_hash')
 
 
 if __name__ == '__main__':

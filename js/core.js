@@ -372,10 +372,10 @@ function deformArm(base, kn, kfun) {
 
 // ---------- constantes con nombre ----------
 export const HAND_LEN_K = 0.79; // largo de la mano ≈ 0,79 × antebrazo
-export const KNUCKLE_W_K = 0.45; // ancho de nudillos ≈ 0,45 × largo de la mano
+export const KNUCKLE_W_K = 0.45; // ancho de nudillos ≈ 0,45 × largo de la mano (si no hay contorno)
 export const KNUCKLE_CIRC_WRIST_K = 1.04; // contorno de nudillos ≈ 1,04 × muñeca
 export const KNUCKLE_CIRC_MIN_K = 2.4; // contorno de nudillos nunca menor que 2,4 × ancho (sección posible)
-export const KNUCKLE_CIRC_K = 2.45; // contorno de nudillos si el usuario da el ancho
+export const KNUCKLE_CIRC_K = 2.45; // contorno ≈ 2,45 × ancho de la sección de nudillos (para deducir el ancho)
 export const HAND_CIRC_EXP = 1.6; // exponente de corrección del grosor de la mano por iteración
 export const HAND_BLEND = [0.3, 2.7]; // la mano empieza 0,3 cm tras la muñeca y se mezcla en 2,7 cm
 export const SECTION_HALF_W = 0.25; // media anchura (cm) de las rodajas de sección
@@ -397,9 +397,9 @@ export const RANGOS = {
   c_antebrazo: [8, 80],
   c_muneca: [8, 80],
   largo_mano: [10, 30],
-  ancho_nudillos: [4, 15],
+  c_nudillos: [15, 32],
 };
-const OPCIONALES = new Set(['codo_muneca', 'hombro_muneca', 'largo_mano', 'ancho_nudillos']);
+const OPCIONALES = new Set(['codo_muneca', 'hombro_muneca', 'largo_mano', 'c_nudillos']);
 export function validateInputs(raw, labels = {}) {
   const inp = { ...raw },
     warn = [],
@@ -423,8 +423,6 @@ export function validateInputs(raw, labels = {}) {
     );
   if (inp.hombro_muneca - inp.hombro_codo < 10)
     throw new Error('El antebrazo sale demasiado corto: revisa los largos.');
-  if (inp.largo_mano != null && inp.ancho_nudillos != null && inp.ancho_nudillos >= inp.largo_mano)
-    throw new Error('El ancho de nudillos no puede ser mayor que el largo de la mano.');
   return { inp, warn };
 }
 export function assertFinite(A, que) {
@@ -457,7 +455,8 @@ function mcpSection(base, P, wc, a, hand) {
     if (Math.abs(dot(p, a) - d0) < SECTION_HALF_W) Q.push([dot(p, u), dot(p, v)]);
   }
   const R = largestComponent(Q);
-  if (R.length < 3) throw new Error('No se encontró la sección de los nudillos: revisa largo y ancho de la mano.');
+  if (R.length < 3)
+    throw new Error('No se encontró la sección de los nudillos: revisa el largo y el contorno de nudillos.');
   const H = hull2d(R),
     [br, ang] = maxCaliper(H);
   const cen = [R.reduce((s, q) => s + q[0], 0) / R.length, R.reduce((s, q) => s + q[1], 0) / R.length];
@@ -520,12 +519,17 @@ export function fit(base, inp, log = () => {}) {
     tWr = inp.hombro_muneca || inp.hombro_codo + inp.codo_muneca,
     forearm = tWr - tEl;
   const circT = [inp.c_axila, inp.c_biceps, inp.c_codo, inp.c_antebrazo, inp.c_muneca];
-  const HLt = inp.largo_mano || HAND_LEN_K * forearm,
-    brT = inp.ancho_nudillos || KNUCKLE_W_K * HLt;
-  // contorno nudillos: 1,04×muñeca, pero nunca menor que 2,4×ancho (sección físicamente posible)
-  const circHand = inp.ancho_nudillos
-    ? KNUCKLE_CIRC_K * brT
-    : Math.max(KNUCKLE_CIRC_WRIST_K * inp.c_muneca, KNUCKLE_CIRC_MIN_K * brT);
+  const HLt = inp.largo_mano || HAND_LEN_K * forearm;
+  // Medida 10 = CONTORNO de nudillos (cinta alrededor de la mano, sin el pulgar). El ancho de la sección se deduce de él.
+  // Sin dato: contorno ≈ 1,04 × muñeca, pero nunca menor que 2,4 × el ancho típico (sección físicamente posible).
+  let brT, circHand;
+  if (inp.c_nudillos) {
+    circHand = inp.c_nudillos;
+    brT = circHand / KNUCKLE_CIRC_K;
+  } else {
+    brT = KNUCKLE_W_K * HLt;
+    circHand = Math.max(KNUCKLE_CIRC_WRIST_K * inp.c_muneca, KNUCKLE_CIRC_MIN_K * brT);
+  }
   const tape0 = tapeFn(base, V0);
   const kn = { elO: m.s_tip - m.S_EL, wrO: m.s_tip - m.S_WR };
   kn.elN = tEl - (tape0(m.S_EL) - kn.elO);
@@ -611,7 +615,6 @@ export function measureAll(base, P, inp, t, hand) {
     ['Contorno mitad antebrazo', inp.c_antebrazo, cAt((el + wr) / 2)],
     ['Contorno muñeca', inp.c_muneca, circAt(base, P, m.S_WR)],
     ['Largo mano', t.HLt, hand.after.HL],
-    ['Ancho nudillos', t.brT, hand.after.br],
     ['Contorno nudillos', t.circHand, hand.after.circ],
   ];
   // pliegues: triángulos invertidos respecto a la base

@@ -37,7 +37,7 @@ jobs:
         run: python3 herramientas/version_sw.py --check-git HEAD~1
       - name: El hash de la CSP coincide con el importmap
         run: python3 herramientas/check_csp.py
-      - run: node --test tests/fit.test.mjs
+      - run: node --test tests/fit.test.mjs tests/foto.test.mjs
 
   python-usd:
     name: Herramientas Python y validación USD

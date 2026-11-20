@@ -415,3 +415,184 @@ canvas.v2d {
 [hidden] {
   display: none !important;
 }
+
+/* ---------- Foto del brazo ---------- */
+.fotoBtns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 0;
+}
+.btnfile {
+  position: relative;
+  display: inline-flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 8px;
+  border: 1px solid #4a443d;
+  background: #2b2724;
+  cursor: pointer;
+  font-weight: 600;
+}
+.btnfile.primary {
+  background: var(--acc);
+  color: #1d1b1a;
+  border: none;
+}
+.btnfile input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.tono {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 0;
+}
+.tonoLab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+input[type='color'] {
+  width: 52px;
+  height: 40px;
+  padding: 2px;
+}
+.decal {
+  display: grid;
+  grid-template-columns: 64px 1fr 1fr 48px;
+  grid-template-areas:
+    'th nm nm x'
+    'th dd al al'
+    'ld ld mv mv'
+    'ang ang ang ang'
+    'rot rot rot rot';
+  gap: 6px 8px;
+  align-items: end;
+  border: 1px solid #3a352f;
+  border-radius: 10px;
+  padding: 8px;
+  margin: 8px 0;
+}
+.decal canvas {
+  grid-area: th;
+  align-self: center;
+  width: 64px;
+  height: 64px;
+  object-fit: contain;
+  background: repeating-conic-gradient(#3a352f 0% 25%, #2b2724 0% 50%) 50% / 12px 12px;
+  border-radius: 6px;
+}
+.decal .g-nm {
+  grid-area: nm;
+}
+.decal .quitar {
+  grid-area: x;
+}
+.decal .g-dd {
+  grid-area: dd;
+}
+.decal .g-al {
+  grid-area: al;
+}
+.decal .g-ld {
+  grid-area: ld;
+}
+.decal .mover {
+  grid-area: mv;
+}
+.decal .g-ang {
+  grid-area: ang;
+}
+.decal .g-rot {
+  grid-area: rot;
+}
+.decal input,
+.decal select {
+  width: 100%;
+  min-width: 0;
+}
+.decal input[type='range'] {
+  padding: 0;
+}
+.decal .mover[aria-pressed='true'] {
+  background: var(--acc);
+  color: #1d1b1a;
+}
+html.editing,
+html.editing body {
+  overflow: hidden;
+}
+.editor {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  background: #111;
+  display: flex;
+  flex-direction: column;
+  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+.ed-top {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+  background: #1d1b1a;
+}
+.ed-top .seg button {
+  min-height: 44px;
+}
+.ed-sp {
+  flex: 1;
+}
+.ed-stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+.ed-stage canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  cursor: crosshair;
+}
+.ed-stage canvas[data-tool='mover'] {
+  cursor: grab;
+}
+.ed-panel {
+  background: #1d1b1a;
+  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+}
+.ed-panel > div {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 8px 12px;
+}
+.ed-panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 13px;
+}
+.ed-panel input[type='text'] {
+  width: 9em;
+}
+.swatch {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 1px #000;
+}

@@ -1,6 +1,9 @@
 import { test, expect, devices } from '@playwright/test';
 import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { sitio, lista, moldear, vigilarErrores, leerZip, tamPNG } from './sitio.mjs';
+import { fotoPNG } from './fixture.mjs';
 
 let S;
 test.beforeAll(async () => {
@@ -250,6 +253,77 @@ test('descargas OBJ, capas y PNG 2D con contenido correcto', async ({ page }) =>
   const info = await page.evaluate(() => window.__last2D);
   expect(tamPNG(p2.buf)).toEqual([info.w, info.h]);
   expect(p2.buf.length).toBe(info.n);
+  expect(errs).toEqual([]);
+});
+
+test('foto del brazo: cuentagotas → tono, recorte con lazo, colocar a X cm y mover en 2D', async ({ page }) => {
+  const errs = vigilarErrores(page);
+  const foto = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'foto-')), 'brazo.png');
+  fs.writeFileSync(foto, fotoPNG()); // imagen generada: nunca fotos reales
+  await page.goto(S.url + '?debug');
+  await lista(page);
+  await page.click('#ejemplo');
+  await page.fill('#c_nudillos', '21'); // contorno de nudillos (antes «ancho»: 21 se rechazaba)
+  await moldear(page);
+  await page.setInputFiles('#fotoGal', foto);
+  await expect(page.locator('#editor')).toBeVisible();
+  const en = (x, y) => page.evaluate(([x, y]) => window.__editor.imgToClient(x, y), [x, y]);
+  // 1) cuentagotas sobre la piel (con poros oscuros que debe ignorar)
+  let [cx, cy] = await en(80, 100);
+  await page.mouse.move(cx, cy);
+  await page.mouse.down();
+  await page.mouse.up();
+  await expect(page.locator('#edHex')).toContainText(/#[0-9a-f]{6}/);
+  await page.click('#edUsarTono');
+  const tono = await page.inputValue('#tono');
+  const rgb = [1, 3, 5].map(k => parseInt(tono.slice(k, k + 2), 16));
+  [200, 152, 122].forEach((v, k) => expect(Math.abs(rgb[k] - v)).toBeLessThan(6));
+  // 2) lazo alrededor del tatuaje (rectángulo 200–400 × 250–500 de la imagen)
+  await page.click('#edTools button[data-t="lazo"]');
+  const pts = [];
+  for (let k = 0; k <= 32; k++) {
+    const a = (k / 32) * 2 * Math.PI;
+    pts.push([300 + 125 * Math.cos(a), 375 + 150 * Math.sin(a)]);
+  }
+  [cx, cy] = await en(...pts[0]);
+  await page.mouse.move(cx, cy);
+  await page.mouse.down();
+  for (const q of pts.slice(1)) {
+    [cx, cy] = await en(...q);
+    await page.mouse.move(cx, cy);
+  }
+  await page.mouse.up();
+  await page.fill('#edAlto', '10');
+  await page.click('#edRecortar');
+  await page.click('#edListo');
+  await expect(page.locator('#editor')).toBeHidden();
+  await expect(page.locator('#decals .decal')).toHaveCount(1);
+  // 3) colocar el centro a 20 cm del hombro, por fuera
+  await page.fill('#decals .dd', '20');
+  await page.waitForTimeout(300);
+  const px = await page.evaluate(() => ({
+    centro: window.__tatPixel(...window.__cmToUV(20, 0)),
+    lejos: window.__tatPixel(...window.__cmToUV(45, 0)),
+    otroLado: window.__tatPixel(...window.__cmToUV(20, 180)),
+  }));
+  expect(px.centro[3]).toBeGreaterThan(200);
+  expect(px.lejos[3]).toBe(0);
+  expect(px.otroLado[3]).toBe(0);
+  // la banda del tatuaje aparece en la guía de tatuajes existentes (sin conflicto con la lista)
+  expect(await page.inputValue('#decals .dd')).toBe('20');
+  // 4) mover en 2D: arrastrar hacia abajo en la vista plana aleja el tatuaje del hombro
+  await page.click('#decals .mover');
+  await expect(page.locator('#btn2D')).toHaveAttribute('aria-pressed', 'true');
+  const box = await page.locator('canvas.v2d').boundingBox();
+  const d0 = await page.evaluate(() => window.__decals()[0].d);
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  for (let k = 1; k <= 5; k++) await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 8 * k);
+  await page.mouse.up();
+  const d1 = await page.evaluate(() => window.__decals()[0].d);
+  expect(Math.abs(d1 - d0)).toBeGreaterThan(0.5);
+  // tono guardado para la próxima vez
+  expect(await page.evaluate(() => localStorage.getItem('moldeador.tono'))).toBe(tono);
   expect(errs).toEqual([]);
 });
 
