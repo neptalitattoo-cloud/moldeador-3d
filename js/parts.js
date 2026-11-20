@@ -2,12 +2,22 @@
 // (mismo formato .json/.bin) y declarar aquí sus campos y estaciones.
 export const PARTS = {
   brazo_derecho: {
-    nombre: 'Brazo derecho', data: 'data/brazo_derecho', version: '?v=5', activo: true,
+    nombre: 'Brazo derecho',
+    data: 'data/brazo_derecho',
+    version: '?v=5',
+    activo: true,
     largos: [
-      ['hombro_codo', '1. Hombro → codo', 32], ['codo_muneca', '2. Codo → muñeca', 24], ['hombro_muneca', '3. Hombro → muñeca', 56]],
+      ['hombro_codo', '1. Hombro → codo', 32],
+      ['codo_muneca', '2. Codo → muñeca', 24],
+      ['hombro_muneca', '3. Hombro → muñeca', 56],
+    ],
     contornos: [
-      ['c_axila', '4. Contorno axila', 31], ['c_biceps', '5. Contorno mitad bíceps', 33], ['c_codo', '6. Contorno codo', 29],
-      ['c_antebrazo', '7. Contorno mitad antebrazo', 30], ['c_muneca', '8. Contorno muñeca', 20]],
+      ['c_axila', '4. Contorno axila', 31],
+      ['c_biceps', '5. Contorno mitad bíceps', 33],
+      ['c_codo', '6. Contorno codo', 29],
+      ['c_antebrazo', '7. Contorno mitad antebrazo', 30],
+      ['c_muneca', '8. Contorno muñeca', 20],
+    ],
     // ayuda: dónde medir (se muestra bajo cada campo y en la vista 3D)
     ayuda: {
       hombro_codo: 'Desde la punta del hombro hasta la punta del codo, por la cara externa, brazo relajado.',
@@ -23,8 +33,14 @@ export const PARTS = {
     },
     // Ejemplo cargable con «Cargar ejemplo» (el formulario empieza vacío). Valores del 3.º número = valor de ejemplo.
     ejemplo: {
-      cliente: 'Ejemplo', largo_mano: '', ancho_nudillos: '',
-      tatuajes: [['Tatuaje A', 9, ''], ['Tatuaje B', 24, ''], ['Bandas', 39, 6]],
+      cliente: 'Ejemplo',
+      largo_mano: '',
+      ancho_nudillos: '',
+      tatuajes: [
+        ['Tatuaje A', 9, ''],
+        ['Tatuaje B', 24, ''],
+        ['Bandas', 39, 6],
+      ],
     },
   },
   brazo_izquierdo: { nombre: 'Brazo izquierdo (próximamente)', activo: false },

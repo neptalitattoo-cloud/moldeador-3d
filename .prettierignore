@@ -1,0 +1,9 @@
+vendor/
+data/
+icons/
+index.html
+manifest.webmanifest
+*.md
+package-lock.json
+test-results/
+playwright-report/
