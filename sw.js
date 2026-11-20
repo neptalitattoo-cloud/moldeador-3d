@@ -1,20 +1,20 @@
 // Moldeador 3D — service worker. Funciona sin conexión; actualización a petición del usuario.
 // Para publicar una versión nueva: python3 herramientas/version_sw.py N  (cambia ?v=N y la caché a la vez).
-const V = 'moldeador-v5';
+const V = 'moldeador-v6';
 const FILES = [
   './',
   'index.html',
-  'css/app.css?v=5',
-  'js/app.js?v=5',
-  'js/core.js?v=5',
-  'js/fit-worker.js?v=5',
-  'js/view2d.js?v=5',
-  'js/parts.js?v=5',
+  'css/app.css?v=6',
+  'js/app.js?v=6',
+  'js/core.js?v=6',
+  'js/fit-worker.js?v=6',
+  'js/view2d.js?v=6',
+  'js/parts.js?v=6',
   'vendor/three.module.min.js',
   'vendor/OrbitControls.js',
   'vendor/fflate.js',
-  'data/brazo_derecho.json?v=5',
-  'data/brazo_derecho.bin?v=5',
+  'data/brazo_derecho.json?v=6',
+  'data/brazo_derecho.bin?v=6',
   'manifest.webmanifest',
   'icons/icon-192.png',
   'icons/icon-512.png',
