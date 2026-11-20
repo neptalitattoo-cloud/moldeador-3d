@@ -66,7 +66,7 @@ export async function sitio() {
 
 // Espera a que la app esté lista sin evaluar código (funciona también con la CSP real)
 export async function lista(page) {
-  await page.waitForSelector('#btn2D:not([disabled])', { timeout: 90_000 });
+  await page.waitForSelector('#btn2D:not([disabled])', { timeout: 180_000 }); // Chromium con swiftshader es lento en CI
 }
 export async function moldear(page) {
   await page.click('#go');
