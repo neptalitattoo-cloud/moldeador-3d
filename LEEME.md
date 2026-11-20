@@ -24,3 +24,10 @@ Botón «📏 Mostrar guías de medición» sobre la vista 3D: anillos rosas en 
 
 ## GitHub Pages
 Todas las rutas son relativas y hay `.nojekyll`: basta subir esta carpeta como raíz del repositorio (o /docs) y activar Pages.
+
+## Vista 2D
+Botón «🗺️ Ver en 2D» junto al de guías. Dos modos:
+- **Textura plana**: el mapa UV como en Procreate (Acciones › 3D › Mostrar textura 2D) con la piel, la capa de tatuaje, las guías azules, los contornos de las islas UV y, si están activadas, las guías rosas de medición (el campo que tocas se resalta en amarillo).
+- **Siluetas**: el brazo ajustado visto de exterior, frente, interior y espalda (proyección ortográfica, sin perspectiva) con los contornos, largos, mano y nudillos numerados y en cm, más una barra de escala de 10 cm. Pensado para imprimir como referencia.
+
+Arrastra para mover, pellizca o usa la rueda para hacer zoom y toca dos veces para encajar. «⬇ Descargar PNG 2D» guarda la vista actual en alta resolución (textura al tamaño de la textura; siluetas a 28 px/cm).

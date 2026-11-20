@@ -25,11 +25,18 @@ td.ok{color:var(--ok)}td.bad{color:var(--bad)}
 @media (max-width:820px){main{grid-template-columns:1fr}#panel{max-height:none}#viewer{height:52vh}}
 
 #viewer{position:relative}
-.overlay{position:absolute;top:10px;left:10px;z-index:3;background:rgba(29,27,26,.82);border:1px solid #ff3d9a;color:#ffd1e6;font-size:14px;padding:8px 12px}
+.vbar{position:absolute;top:10px;left:10px;right:10px;z-index:3;display:flex;flex-wrap:wrap;gap:6px;align-items:center;pointer-events:none}
+.vbar>*{pointer-events:auto}
+.bar2d{display:flex;gap:6px;flex-wrap:wrap}.bar2d[hidden]{display:none}
+.seg{display:inline-flex;border:1px solid #ff3d9a;border-radius:8px;overflow:hidden;background:rgba(29,27,26,.82)}
+.seg button{border:0;border-radius:0;background:transparent;color:#ffd1e6;font-size:14px;padding:8px 12px}
+.seg button[aria-pressed="true"]{background:#ff3d9a;color:#1d1b1a;font-weight:700}
+canvas.v2d{position:absolute;inset:0;z-index:1;touch-action:none;cursor:grab}
+.overlay{position:relative;background:rgba(29,27,26,.82);border:1px solid #ff3d9a;color:#ffd1e6;font-size:14px;padding:8px 12px}
 .overlay[aria-pressed="true"]{background:#ff3d9a;color:#1d1b1a;font-weight:700}
 .guiaInfo{position:absolute;left:10px;right:10px;bottom:10px;z-index:3;background:rgba(29,27,26,.88);border-left:4px solid #ff3d9a;border-radius:8px;padding:8px 10px;font-size:13px;color:var(--ink)}
 #labels{position:absolute;inset:0;pointer-events:none;z-index:2;overflow:hidden}
 .gl{position:absolute;transform:translate(-50%,-50%);min-width:22px;height:22px;padding:0 6px;border-radius:11px;background:#ff3d9a;color:#fff;font:700 12px/22px -apple-system,sans-serif;text-align:center;white-space:nowrap;box-shadow:0 1px 4px rgba(0,0,0,.5)}
 .gl.dim{opacity:.35}.gl.on{background:#ffd400;color:#1d1b1a;transform:translate(-50%,-50%) scale(1.25)}
 .help{color:var(--mut);font-size:11px;line-height:1.25}
-@media (max-width:820px){.overlay{font-size:13px;padding:7px 10px}.gl{font-size:11px}}
+@media (max-width:820px){.overlay,.seg button{font-size:12.5px;padding:6px 9px}.gl{font-size:11px}}

@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/addons/OrbitControls.js';
 import { zipSync } from '../vendor/fflate.js';
 import * as K from './core.js';
 import { PARTS } from './parts.js';
+import { View2D } from './view2d.js';
 
 const $ = id => document.getElementById(id);
 const status = t => { $('status').textContent = t; };
@@ -74,6 +75,7 @@ function paintTexture() { // vista previa = base + tatuaje + guías
   const t = tattooLayer(); if (t) g.drawImage(t, 0, 0);
   if ($('verGuias').checked) drawGuides(g, W, H);
   if (texture) { texture.needsUpdate = true; }
+  if (v2d) v2d.invalidate('tex');
 }
 function drawGuides(g, W, H) {
   const P = result ? result.P : base.V0, tape = result ? result.report.tape : K.tapeFn(base, base.V0);
@@ -105,14 +107,15 @@ guias_medicion.png (opcional): anillos rosas donde se mide cada contorno (axila,
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
 const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(30, 1, 1, 2000);
 const controls = new OrbitControls(camera, renderer.domElement);
+let sun = null;
 function initViewer() {
   const el = $('viewer'); renderer.setPixelRatio(Math.min(2, devicePixelRatio)); el.appendChild(renderer.domElement);
-  scene.add(new THREE.HemisphereLight(0xffffff, 0x554433, 2.2)); const d = new THREE.DirectionalLight(0xffffff, 1.6); d.position.set(60, 80, 120); scene.add(d);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x554433, 2.2)); const d = new THREE.DirectionalLight(0xffffff, 1.6); d.position.set(60, 80, 120); scene.add(d); sun = d;
   renderer.setClearColor(0x000000, 0); controls.enableDamping = true;
   const resize = () => { const w = el.clientWidth, h = el.clientHeight; renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); if (!fitCamera.done) fitCamera(); };
   new ResizeObserver(resize).observe(el); resize();
   scene.add(guideGroup);
-  renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, camera); placeLabels(); });
+  renderer.setAnimationLoop(() => { if (mode2d) return; controls.update(); renderer.render(scene, camera); placeLabels(); });
 }
 function fitCamera() { // encuadra todo el brazo (con margen para las etiquetas)
   if (!geo) return; geo.computeBoundingBox(); const b = geo.boundingBox, c = b.getCenter(new THREE.Vector3()), sz = b.getSize(new THREE.Vector3());
@@ -189,8 +192,9 @@ function refreshGuides() {
   const b = $('btnGuias'); b.setAttribute('aria-pressed', guidesOn); b.textContent = guidesOn ? '📏 Ocultar guías de medición' : '📏 Mostrar guías de medición';
   const info = $('guiaInfo');
   if (focusId) { info.hidden = false; info.innerHTML = `<b>${GUIDE_NUM[focusId]}. ${GUIDE_TXT[focusId]}</b> — ${(part.ayuda || {})[focusId] || ''}`; }
-  else if (guidesOn) { info.hidden = false; info.textContent = 'Los números coinciden con los campos de la ficha. Toca un campo para resaltar dónde se mide.'; }
+  else if (guidesOn && !mode2d) { info.hidden = false; info.textContent = 'Los números coinciden con los campos de la ficha. Toca un campo para resaltar dónde se mide.'; }
   else info.hidden = true;
+  if (v2d) v2d.invalidate('guides');
 }
 const _v = new THREE.Vector3();
 function placeLabels() {
@@ -222,7 +226,7 @@ async function run(ev) {
   status('Moldeando…'); $('go').disabled = true; await new Promise(res => setTimeout(res, 30));
   try {
     const t0 = performance.now(); result = K.fit(base, r.inp); window.__result = result;
-    updateMesh(result.P); paintTexture(); buildGuides(result.P); showTable(result.report, r.warn);
+    updateMesh(result.P); if (v2d) v2d.cache = {}; paintTexture(); buildGuides(result.P); showTable(result.report, r.warn);
     status(`Listo en ${((performance.now() - t0) / 1000).toFixed(1)} s. Puedes girar el modelo con el dedo.`);
     $('dlUsdz').disabled = $('dlObj').disabled = $('dlCapas').disabled = false;
     if (innerWidth <= 820) $('vista').scrollIntoView({ behavior: 'smooth' });
@@ -255,6 +259,45 @@ async function dlCapas() {
   const z = zipSync(f, { level: 6 }); window.__lastCAPAS = z; save(z, `${name}_capas.zip`, 'application/zip');
   status(`Capas listas: ${Object.keys(f).filter(k => k.endsWith('.png')).map(k => k.split('/')[1]).join(', ') || 'no hay capas (ni guías ni tatuaje)'}.`);
 }
+// ---------- vista 2D ----------
+let v2d = null, mode2d = false;
+function orthoView(d, right, xmin, xmax, ymin, ymax, W, H) { // vista ortográfica del brazo ajustado (WebGL), devuelve un canvas
+  W = Math.round(W); H = Math.round(H);
+  const cam = new THREE.OrthographicCamera(xmin, xmax, ymax, ymin, -1000, 1000), up = new THREE.Vector3(0, 1, 0), D = new THREE.Vector3(...d);
+  cam.position.copy(D).multiplyScalar(300); cam.up.copy(up); cam.lookAt(0, 0, 0); cam.updateMatrixWorld();
+  // la cámara mira al origen: desplazamos el encuadre con la proyección
+  const rt = new THREE.WebGLRenderTarget(W, H, { samples: 4 }); rt.texture.colorSpace = THREE.SRGBColorSpace;
+  const gv = guideGroup.visible, sp = sun.position.clone(); guideGroup.visible = false; sun.position.copy(D).multiplyScalar(120).add(new THREE.Vector3(0, 80, 0)).addScaledVector(new THREE.Vector3(...right), 40);
+  renderer.setRenderTarget(rt); renderer.setClearColor(0xffffff, 0); renderer.clear(); renderer.render(scene, cam); renderer.setRenderTarget(null);
+  const px = new Uint8Array(W * H * 4); renderer.readRenderTargetPixels(rt, 0, 0, W, H, px); rt.dispose();
+  guideGroup.visible = gv; sun.position.copy(sp);
+  const c = mkCanvas(W, H), g = c.getContext('2d'), im = g.createImageData(W, H), row = W * 4;
+  for (let y = 0; y < H; y++) im.data.set(px.subarray((H - 1 - y) * row, (H - y) * row), y * row);
+  // desmultiplicar alfa (bordes suaves)
+  const a = im.data; for (let i = 0; i < a.length; i += 4) { const al = a[i + 3]; if (al && al < 255) { a[i] = Math.min(255, a[i] * 255 / al); a[i + 1] = Math.min(255, a[i + 1] * 255 / al); a[i + 2] = Math.min(255, a[i + 2] * 255 / al); } }
+  g.putImageData(im, 0, 0); return c;
+}
+const ROW_ID = ['hombro_codo', 'codo_muneca', 'hombro_muneca', 'c_axila', 'c_biceps', 'c_codo', 'c_antebrazo', 'c_muneca', 'largo_mano', 'ancho_nudillos'];
+function init2D() {
+  v2d = new View2D($('viewer'), {
+    K, base, num: GUIDE_NUM, txt: GUIDE_TXT, members, ortho: orthoView,
+    P: () => result ? result.P : base.V0, texSize, tattooLayer,
+    baseLayer: () => { const [W] = texSize(); if (!baseCache || baseCache.width !== W || baseCache.userImg !== userImg) { baseCache = baseLayer(); baseCache.userImg = userImg; } return baseCache; },
+    showTattoo: () => $('verGuias').checked, drawTattooGuides: drawGuides,
+    guideState: () => ({ on: guidesOn, focus: focusId }),
+    values: () => { const o = {}; if (result) ROW_ID.forEach((id, i) => { o[id] = result.report.rows[i][2]; }); return o; },
+    client: () => $('cliente').value.trim() || 'cliente',
+  });
+  const set2D = on => { mode2d = on; v2d.show(on); renderer.domElement.style.display = on ? 'none' : ''; $('labels').style.display = on ? 'none' : '';
+    $('btn2D').setAttribute('aria-pressed', on); $('btn2D').textContent = on ? '🧊 Ver en 3D' : '🗺️ Ver en 2D'; $('bar2d').hidden = !on; refreshGuides(); if (on) { v2d._size(); v2d.fit(); v2d.draw(); } };
+  const setSub = m => { v2d.setMode(m); document.querySelectorAll('#seg2d button').forEach(b => b.setAttribute('aria-pressed', b.dataset.m === m)); };
+  $('btn2D').onclick = () => set2D(!mode2d);
+  document.querySelectorAll('#seg2d button').forEach(b => { b.onclick = () => setSub(b.dataset.m); });
+  $('dl2D').onclick = async () => { status('Generando PNG 2D…'); await new Promise(r => setTimeout(r, 30));
+    const c = v2d.exportCanvas(), bytes = await toPNG(c), name = `${fname()}_2d_${v2d.mode === 'tex' ? 'textura' : 'siluetas'}.png`;
+    window.__last2D = { name, w: c.width, h: c.height, n: bytes.length }; save(bytes, name, 'image/png'); status(`PNG 2D listo: ${name} (${c.width}×${c.height} px).`); };
+  window.__v2d = v2d;
+}
 // ---------- arranque ----------
 async function start() {
   buildForm(); initViewer();
@@ -271,6 +314,7 @@ async function start() {
   const [meta, buf] = await Promise.all([fetch(part.data + '.json').then(r => r.json()), fetch(part.data + '.bin').then(r => r.arrayBuffer())]);
   base = K.loadBase(meta, buf); buildMesh(); buildGuides(base.V0);
   $('btnGuias').onclick = () => { guidesOn = !guidesOn; refreshGuides(); };
+  init2D();
   status('Modelo base cargado. Revisa las medidas y pulsa «Moldear».');
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   window.__ready = true;

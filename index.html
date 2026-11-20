@@ -51,7 +51,16 @@
   </section>
   <section id="vista">
     <div id="viewer">
-      <button type="button" id="btnGuias" class="overlay" aria-pressed="false">📏 Mostrar guías de medición</button>
+      <div class="vbar">
+        <button type="button" id="btnGuias" class="overlay" aria-pressed="false">📏 Mostrar guías de medición</button>
+        <button type="button" id="btn2D" class="overlay" aria-pressed="false">🗺️ Ver en 2D</button>
+        <div id="bar2d" class="bar2d" hidden>
+          <div id="seg2d" class="seg" role="group" aria-label="Tipo de vista 2D">
+            <button type="button" data-m="tex" aria-pressed="true">Textura plana</button><button type="button" data-m="sil" aria-pressed="false">Siluetas</button>
+          </div>
+          <button type="button" id="dl2D" class="overlay">⬇ Descargar PNG 2D</button>
+        </div>
+      </div>
       <div id="guiaInfo" class="guiaInfo" hidden></div>
       <div id="labels"></div>
     </div>
@@ -62,6 +71,7 @@
     </div>
     <table id="tabla"><thead><tr><th>Medida</th><th>Objetivo</th><th>Resultado</th><th>Dif.</th></tr></thead><tbody></tbody></table>
     <p id="extra" class="hint"></p>
+    <p class="hint">Vista 2D: «Textura plana» muestra el mapa UV como en Procreate (Acciones › 3D › Mostrar textura 2D) con la piel, tu capa de tatuaje, las guías azules y, si las activas, las guías rosas de medición. «Siluetas» dibuja el brazo ajustado de frente, espalda, interior y exterior con las medidas en cm y una escala de 10 cm, para imprimir como referencia. Arrastra para mover, pellizca o usa la rueda para hacer zoom y toca dos veces para encajar.</p>
   </section>
 </main>
 <script type="module" src="js/app.js"></script>
