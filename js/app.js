@@ -1,9 +1,9 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/OrbitControls.js';
-import { zipSync } from '../vendor/fflate.js?v=6';
-import * as K from './core.js?v=6';
-import { PARTS } from './parts.js?v=6';
-import { View2D } from './view2d.js?v=6';
+import { zipSync } from '../vendor/fflate.js?v=7';
+import * as K from './core.js?v=7';
+import { PARTS } from './parts.js?v=7';
+import { View2D } from './view2d.js?v=7';
 
 // ---------- entorno y utilidades ----------
 const $ = id => document.getElementById(id);
@@ -727,7 +727,7 @@ let workerInit = null;
 function startWorker(meta, buf) {
   workerInit = [meta, buf];
   try {
-    worker = new Worker(new URL('./fit-worker.js?v=6', import.meta.url), { type: 'module' });
+    worker = new Worker(new URL('./fit-worker.js?v=7', import.meta.url), { type: 'module' });
   } catch {
     worker = null;
     return;
