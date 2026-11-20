@@ -167,11 +167,11 @@ test('red colgada: el SW sirve la copia guardada tras el tiempo límite de 3 s',
   S.colgarRed(true); // la página nunca responde (pero hay «conexión»)
   try {
     const t0 = Date.now();
-    await page.reload({ waitUntil: 'commit', timeout: 30_000 });
-    await lista(page);
-    const ms = Date.now() - t0;
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: 30_000 });
+    const ms = Date.now() - t0; // sólo la página: el arranque de la app (WebGL) no cuenta
     expect(ms).toBeGreaterThanOrEqual(2_500); // esperó a la red…
-    expect(ms).toBeLessThan(20_000); // …pero no para siempre
+    expect(ms).toBeLessThan(10_000); // …pero no para siempre: sirvió la copia guardada
+    await lista(page);
   } finally {
     S.colgarRed(false);
   }
