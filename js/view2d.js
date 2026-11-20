@@ -1,15 +1,10 @@
 // Vista 2D: (a) textura plana con capas y guías, (b) siluetas ortográficas del brazo ajustado con medidas.
 // Zoom con pellizco / rueda, arrastrar para mover, doble toque para encajar.
+import { dot, cross, norm } from './core.js?v=5';
 const PINK = '#ff3d9a',
   PINK_D = '#d81b72',
   HI = '#ffc400',
   HI_D = '#f29900';
-const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-const norm = a => {
-  const l = Math.hypot(...a) || 1;
-  return a.map(x => x / l);
-};
 const neg = a => a.map(x => -x);
 const mk = (W, H) => {
   const c = document.createElement('canvas');
@@ -98,10 +93,17 @@ export class View2D {
             ? ['texG', 'silG']
             : [],
     );
-    if (this.active) {
+    this._schedule();
+  }
+  // un solo redibujado por frame aunque lleguen varias invalidaciones seguidas
+  _schedule() {
+    if (!this.active || this._raf) return;
+    this._raf = requestAnimationFrame(() => {
+      this._raf = 0;
+      if (!this.active) return;
       this.ensure();
       this.draw();
-    }
+    });
   }
   ensure() {
     const c = this.cache;
@@ -147,7 +149,12 @@ export class View2D {
     g.fillRect(0, 0, this.cv.width, this.cv.height);
     g.setTransform(d * this.v.s, 0, 0, d * this.v.s, d * this.v.tx, d * this.v.ty);
     g.imageSmoothingQuality = 'high';
-    for (const L of this.layers) if (L) g.drawImage(L, 0, 0);
+    // una capa liberada por invalidate() (ancho 0) se omite: el redibujado ya está programado
+    for (const L of this.layers) if (L && L.width && L.height) g.drawImage(L, 0, 0);
+  }
+  setTouchScroll(on) {
+    this.touchScroll = on;
+    this.cv.style.touchAction = on ? 'pan-y' : 'none';
   }
   _pointers() {
     const P = new Map(),
@@ -178,6 +185,7 @@ export class View2D {
       P.set(e.pointerId, cur);
       moved += Math.hypot(cur[0] - prev[0], cur[1] - prev[1]);
       if (P.size === 1) {
+        if (this.touchScroll && e.pointerType === 'touch') return; // en el móvil un dedo hace scroll de la página
         this.v.tx += cur[0] - prev[0];
         this.v.ty += cur[1] - prev[1];
         this.draw();
@@ -185,6 +193,7 @@ export class View2D {
         const [a, b] = [...P.values()],
           dist = Math.hypot(a[0] - b[0], a[1] - b[1]),
           mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+        if (this.onGesture) this.onGesture();
         if (last) {
           this.v.tx += mid[0] - last.mid[0];
           this.v.ty += mid[1] - last.mid[1];
@@ -283,11 +292,12 @@ export class View2D {
     g.stroke();
     return c;
   }
-  renderTexGuides(size = this.api.texSize()) {
+  renderTexGuides(size = this.api.texSize(), target = null) {
+    // target: dibuja directamente sobre ese canvas (exportación sin canvas intermedio)
     const { api } = this,
       { K, base } = api,
       [W, H] = size,
-      c = mk(W, H),
+      c = target || mk(W, H),
       g = c.getContext('2d');
     if (api.showTattoo()) api.drawTattooGuides(g, W, H);
     const st = api.guideState();
@@ -672,7 +682,7 @@ export class View2D {
           g.fill();
         }
         const mid = Q[Math.floor(Q.length / 2)];
-        let lp = v.px(mid.p);
+        const lp = v.px(mid.p);
         label(id, lp, -1, col);
       }
       {
@@ -692,10 +702,8 @@ export class View2D {
     };
     if (this.mode === 'tex') {
       const S = this.api.exportSize(),
-        t = this.renderTex(S),
-        gd = this.renderTexGuides(S);
-      t.getContext('2d').drawImage(gd, 0, 0);
-      free(gd);
+        t = this.renderTex(S);
+      this.renderTexGuides(S, t);
       return t;
     }
     const sil = this.renderSil(28, 4),

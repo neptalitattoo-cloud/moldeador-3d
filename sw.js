@@ -19,6 +19,7 @@ const FILES = [
   'icons/icon-192.png',
   'icons/icon-512.png',
 ];
+const NAV_TIMEOUT_MS = 3000;
 const SHELL = new URL('./', self.registration.scope).href;
 
 self.addEventListener('install', e =>
@@ -52,11 +53,16 @@ self.addEventListener('fetch', e => {
       const c = await caches.open(V);
       if (req.mode === 'navigate') {
         // red primero (los recursos llevan ?v=N, así que no se mezclan versiones); sin red, la copia guardada
+        // con un tiempo límite: una wifi que conecta pero no responde no debe impedir abrir la app
+        const ctl = new AbortController(),
+          timer = setTimeout(() => ctl.abort(), NAV_TIMEOUT_MS);
         try {
-          const res = await fetch(req, { cache: 'no-cache' });
+          const res = await fetch(req, { cache: 'no-cache', signal: ctl.signal });
           if (res.ok) return res;
         } catch {
-          /* sin conexión */
+          /* sin conexión o demasiado lenta */
+        } finally {
+          clearTimeout(timer);
         }
         return (await c.match(SHELL)) || (await c.match(req, { ignoreSearch: true })) || Response.error();
       }

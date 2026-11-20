@@ -12,7 +12,9 @@ const status = t => {
 };
 const IS_IOS =
   /iP(hone|od|ad)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-const IS_IPHONE = /iPhone|iPod/.test(navigator.userAgent);
+// iPhone también con «Solicitar sitio web de escritorio» (se presenta como Mac): se detecta por el tamaño de pantalla
+const IS_IPHONE = /iPhone|iPod/.test(navigator.userAgent) || (IS_IOS && Math.min(screen.width, screen.height) < 500);
+const NARROW = matchMedia('(max-width: 820px)');
 const MAX_TEX = IS_IPHONE ? 2048 : 4096; // PNG que va al USDZ/OBJ/capas
 const MAX_PREVIEW = IS_IOS ? 2048 : 4096; // visor 3D y vista 2D
 const MAX_UPLOAD_PX = 8192,
@@ -35,8 +37,8 @@ const PREVIEW_BG = '#b9a99c';
 const TATTOO_BLUE = '#1e7fd8',
   GUIDE_PINK = '#ff3d9a';
 
-let part = PARTS.brazo_derecho,
-  base = null,
+const part = PARTS.brazo_derecho;
+let base = null,
   result = null,
   resultKey = null;
 let userImg = null,
@@ -68,13 +70,14 @@ function buildForm() {
       const l = document.createElement('label');
       l.append(lab);
       const i = Object.assign(document.createElement('input'), {
-        type: 'number',
+        type: 'text', // con type=number Safari en iOS vacía «32,5» con teclado español
         id,
-        step: '0.1',
-        min: lo,
-        max: hi,
         placeholder: `ej. ${ej}`,
+        autocomplete: 'off',
+        title: `Entre ${lo} y ${hi} cm`,
       });
+      i.dataset.min = lo;
+      i.dataset.max = hi;
       i.inputMode = 'decimal';
       const h = Object.assign(document.createElement('small'), { className: 'help' });
       h.dataset.for = id;
@@ -85,8 +88,7 @@ function buildForm() {
   mk($('contornos'), part.contornos);
   for (const id of ['largo_mano', 'ancho_nudillos']) {
     const [lo, hi] = K.RANGOS[id];
-    $(id).min = lo;
-    $(id).max = hi;
+    $(id).title = `Entre ${lo} y ${hi} cm (opcional)`;
   }
   document.querySelectorAll('.help').forEach(el => {
     el.textContent = (part.ayuda || {})[el.dataset.for] || '';
@@ -132,10 +134,9 @@ function addTat(n, d, w) {
     i.className = cls;
     i.value = val;
     if (numeric) {
-      i.type = 'number';
+      i.type = 'text';
       i.inputMode = 'decimal';
-      i.step = '0.1';
-      i.min = '0';
+      i.autocomplete = 'off';
     }
     i.addEventListener('change', () => paintTexture());
     l.append(i);
@@ -164,8 +165,8 @@ function tattoos() {
   return [...document.querySelectorAll('.tat')]
     .map(d => ({
       n: d.querySelector('.tn').value.trim(),
-      d: parseFloat(d.querySelector('.td').value),
-      w: parseFloat(d.querySelector('.tw').value),
+      d: parseFloat(d.querySelector('.td').value.replace(',', '.')),
+      w: parseFloat(d.querySelector('.tw').value.replace(',', '.')),
     }))
     .filter(t => Number.isFinite(t.d) && t.d > 0 && t.d < 120);
 }
@@ -395,7 +396,27 @@ function initViewer() {
   resize();
   scene.add(guideGroup);
   controls.addEventListener('change', requestRender);
+  controls.addEventListener('start', () => {
+    if (NARROW.matches && !touchHintSeen) {
+      touchHintSeen = true;
+      refreshGuides();
+    }
+  });
+  applyTouchMode();
+  NARROW.addEventListener('change', applyTouchMode);
   dbg('__frames', () => frames);
+}
+// En el móvil: un dedo hace scroll de la página y dos dedos giran y hacen zoom.
+// Se aplica DESPUÉS de crear OrbitControls, que pone touchAction='none' por su cuenta.
+let touchHintSeen = false;
+function applyTouchMode() {
+  const narrow = NARROW.matches;
+  controls.touches = narrow
+    ? { ONE: null, TWO: THREE.TOUCH.DOLLY_ROTATE }
+    : { ONE: THREE.TOUCH.ROTATE, TWO: THREE.TOUCH.DOLLY_PAN };
+  renderer.domElement.style.touchAction = narrow ? 'pan-y' : 'none';
+  if (v2d) v2d.setTouchScroll(narrow);
+  refreshGuides();
 }
 function fitCamera() {
   // encuadra todo el brazo (con margen para las etiquetas)
@@ -617,6 +638,11 @@ function refreshGuides() {
   } else if (guidesOn && !mode2d) {
     info.hidden = false;
     info.textContent = 'Los números coinciden con los campos de la ficha. Toca un campo para resaltar dónde se mide.';
+  } else if (NARROW.matches && !touchHintSeen && base) {
+    info.hidden = false;
+    info.textContent = mode2d
+      ? '✌️ Usa dos dedos para mover y hacer zoom; con un dedo bajas por la página.'
+      : '✌️ Usa dos dedos para girar y hacer zoom; con un dedo bajas por la página.';
   } else info.hidden = true;
   if (v2d) v2d.invalidate('guides');
   requestRender();
@@ -685,7 +711,9 @@ let worker = null,
   workerReady = null,
   jobSeq = 0;
 const jobs = new Map();
+let workerInit = null;
 function startWorker(meta, buf) {
+  workerInit = [meta, buf];
   try {
     worker = new Worker(new URL('./fit-worker.js?v=5', import.meta.url), { type: 'module' });
   } catch {
@@ -709,7 +737,7 @@ function startWorker(meta, buf) {
       if (!job) return;
       if (m.type === 'progress') {
         const it = /^iter (\d+)/.exec(m.line);
-        if (it) status(`Moldeando… ${+it[1] + 1}/12`);
+        if (it) status(`Moldeando… ${+it[1] + 1}/${K.FIT_ITERS}`);
         return;
       }
       jobs.delete(m.id);
@@ -726,6 +754,16 @@ function startWorker(meta, buf) {
   const copy = buf.slice(0); // la base del hilo principal queda intacta
   worker.postMessage({ type: 'init', meta, buf: copy }, [copy]);
 }
+// Cancelar: se termina el worker (corta el cálculo en seco) y se arranca uno nuevo.
+function cancelFit() {
+  if (!worker || !jobs.size) return;
+  const pend = [...jobs.values()];
+  jobs.clear();
+  worker.terminate();
+  worker = null;
+  for (const j of pend) j.ko(new Error('cancelado'));
+  startWorker(...workerInit);
+}
 async function fitAsync(inp) {
   if (worker) {
     try {
@@ -734,6 +772,7 @@ async function fitAsync(inp) {
       const m = await new Promise((ok, ko) => {
         jobs.set(id, { ok, ko });
         worker.postMessage({ type: 'fit', id, inp });
+        $('cancel').hidden = false; // sólo se puede cancelar en el worker
       });
       return { P: m.P, report: { ...m.report, tape: K.tapeFn(base, m.P) }, ms: m.ms, via: 'worker' };
     } catch (e) {
@@ -747,16 +786,20 @@ async function fitAsync(inp) {
 }
 
 // ---------- acciones ----------
-function setBusy(b) {
-  $('go').disabled = b || !base;
+let fitting = false,
+  exportBusy = false;
+function setBusy() {
+  // «Moldear» bloqueado mientras se moldea o se exporta (evita la carrera entre ambos)
+  $('go').disabled = !base || fitting || exportBusy;
+  if (!fitting) $('cancel').hidden = true;
   refreshExportable();
 }
 function refreshExportable() {
-  const ok = fresh() && !!base && !$('go').disabled;
+  const ok = fresh() && !!base && !fitting && !exportBusy;
   for (const id of ['dlUsdz', 'dlObj', 'dlCapas']) $(id).disabled = !ok;
   $('dl2D').disabled = !base || (!!result && !ok);
   $('stale').hidden = !result || fresh();
-  if ((result && !fresh()) || $('go').disabled) {
+  if ((result && !fresh()) || fitting) {
     $('ready').hidden = true;
     pendingFile = null;
   }
@@ -773,7 +816,8 @@ async function run(ev) {
   }
   const key = inputsKey();
   status('Moldeando…');
-  setBusy(true);
+  fitting = true;
+  setBusy();
   try {
     const out = await fitAsync(r.inp);
     result = out;
@@ -788,15 +832,22 @@ async function run(ev) {
       `Listo en ${(out.ms / 1000).toFixed(1)} s. ` +
         (result.report.flips
           ? `⚠ ${result.report.flips} caras invertidas: revisa antes de exportar.`
-          : 'Puedes girar el modelo con el dedo.'),
+          : NARROW.matches
+            ? 'Gira el modelo con dos dedos.'
+            : 'Puedes girar el modelo con el ratón o el dedo.'),
     );
     if (innerWidth <= 820) $('vista').scrollIntoView({ behavior: 'smooth' });
   } catch (e) {
-    console.warn(e);
-    resultKey = null;
-    status('⚠ ' + e.message + ' Vuelve a moldear cuando lo corrijas.');
+    if (e.message === 'cancelado') {
+      status('Moldeado cancelado.');
+    } else {
+      console.warn(e);
+      resultKey = null;
+      status('⚠ ' + e.message + ' Vuelve a moldear cuando lo corrijas.');
+    }
   } finally {
-    setBusy(false);
+    fitting = false;
+    setBusy();
   }
 }
 const fname = () =>
@@ -856,33 +907,42 @@ const exporting =
       status('⚠ Las medidas han cambiado: vuelve a moldear.');
       return;
     }
-    for (const id of ['dlUsdz', 'dlObj', 'dlCapas', 'dl2D']) $(id).disabled = true; // evita el doble toque
+    const R = result; // el resultado se fija al empezar: un moldeado posterior no se mezcla con esta exportación
+    if (
+      needsFit &&
+      R.report.flips &&
+      !confirm(`El modelo tiene ${R.report.flips} caras invertidas. ¿Exportar igualmente?`)
+    )
+      return;
+    exportBusy = true;
+    setBusy(); // también bloquea «Moldear» y evita el doble toque
     try {
-      await fn();
+      await fn(R);
     } catch (e) {
       console.warn(e);
       status('⚠ ' + e.message);
     } finally {
-      refreshExportable();
+      exportBusy = false;
+      setBusy();
     }
   };
-async function dlUsdz() {
+async function dlUsdz(R) {
   status('Generando USDZ…');
   await tick();
   const png = await basePNG();
   const name = `brazo_${fname()}`,
-    bytes = K.makeUSDZ(base, result.P, name, png); // core limpia el nombre del prim
+    bytes = K.makeUSDZ(base, R.P, name, png); // core limpia el nombre del prim
   dbg('__lastUSDZ', bytes);
   offerFile(bytes, `${name}.usdz`, 'model/vnd.usdz+zip');
   status(`USDZ listo (${(bytes.length / 1e6).toFixed(1)} MB). En el iPad: Archivos → abrir con Procreate.`);
 }
-async function dlObj() {
+async function dlObj(R) {
   status('Generando OBJ…');
   await tick();
   const png = await basePNG(),
     name = `brazo_${fname()}`,
     capas = await layerFiles(name);
-  const { obj, mtl } = K.makeOBJ(base, result.P, name, `${name}.mtl`, `${name}.png`),
+  const { obj, mtl } = K.makeOBJ(base, R.P, name, `${name}.mtl`, `${name}.png`),
     enc = new TextEncoder();
   const z = zipSync(
     {
@@ -1055,6 +1115,13 @@ function init2D() {
     offerFile(bytes, name, 'image/png');
     status(`PNG 2D listo: ${name} (${w}×${h} px).`);
   }, false);
+  v2d.setTouchScroll(NARROW.matches);
+  v2d.onGesture = () => {
+    if (!touchHintSeen) {
+      touchHintSeen = true;
+      refreshGuides();
+    }
+  };
   dbg('__v2d', v2d);
 }
 
@@ -1193,7 +1260,8 @@ async function start() {
   startWorker(meta, buf);
   init2D();
   for (const id of ['texReset', 'tatReset', 'btn2D', 'btnGuias']) $(id).disabled = false;
-  setBusy(false);
+  $('cancel').onclick = cancelFit;
+  setBusy();
   status('Modelo base cargado. Escribe las medidas (o «Cargar ejemplo») y pulsa «Moldear».');
   window.__ready = true;
 }

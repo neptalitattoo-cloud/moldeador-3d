@@ -13,6 +13,7 @@ pip install -r herramientas/requirements.txt
 | `web_bake.py` | Hornea `data/brazo_derecho.json/.bin` desde un OBJ fuente (`MOLDEADOR_SRC_OBJ=/ruta/al.obj`). El OBJ fuente no se publica. |
 | `split_layers.py textura.png salida/` | Separa una textura pintada en piel (solo islas UV) y capa de tatuaje. |
 | `usdz_writer.py` | Escritor USDZ con `pxr` (referencia). |
-| `version_sw.py` | Sube la versión de caché (`?v=N` y `moldeador-vN`) en todos los archivos a la vez. |
+| `version_sw.py` | Sube la versión de caché (`?v=N` y `moldeador-vN`) en todos los archivos a la vez y guarda el hash en `.version_hash`; `--check` falla si cambió algo sin subir la versión. |
+| `check_csp.py` | Comprueba que el sha256 de la CSP coincide con el importmap de `index.html`. |
 
 `lib/` contiene los módulos compartidos (`fit_measures`, `hand_measure`, `objio`).

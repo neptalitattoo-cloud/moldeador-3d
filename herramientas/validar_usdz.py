@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Valida uno o varios .usdz con el marco de validación de USD (usd-core ≥ 24.08; sustituye a usdchecker).
+"""Valida uno o varios .usdz con el marco de validación de USD (usd-core ≥ 26.3; sustituye a usdchecker. Probado con 26.3 y 26.11: en 25.x el wheel de pip falla al cargar los validadores de Hydra).
    python3 herramientas/validar_usdz.py brazo_cliente.usdz [...]   -> sale con error si hay errores."""
 import sys
 from pxr import Usd, UsdValidation

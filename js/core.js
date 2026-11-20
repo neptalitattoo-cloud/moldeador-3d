@@ -198,9 +198,23 @@ function components(P, r) {
   for (let i = 0; i < n; i++) lab[i] = find(i);
   return lab;
 }
-const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
-const norm = a => {
+// Puntos del componente conexo más grande (radio de vecindad r).
+export function largestComponent(Q, r = SECTION_LINK_R) {
+  const lab = components(Q, r),
+    cnt = new Map();
+  for (const l of lab) cnt.set(l, (cnt.get(l) || 0) + 1);
+  let big = -1,
+    bc = -1;
+  for (const [l, c] of cnt)
+    if (c > bc) {
+      bc = c;
+      big = l;
+    }
+  return Q.filter((_, i) => lab[i] === big);
+}
+export const dot = (a, b) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+export const cross = (a, b) => [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+export const norm = a => {
   const l = Math.hypot(a[0], a[1], a[2]);
   return [a[0] / l, a[1] / l, a[2] / l];
 };
@@ -348,13 +362,27 @@ function deformArm(base, kn, kfun) {
     for (let c = 0; c < 3; c++) P[3 * i + c] = Pn[3 * j0 + c] * (1 - t) + Pn[3 * j0 + 3 + c] * t + off[3 * i + c] * k;
   }
   const pnAt = s => {
-    let u = Math.min(nC - 1, Math.max(0, s / st));
+    const u = Math.min(nC - 1, Math.max(0, s / st));
     const j0 = Math.min(nC - 2, Math.floor(u)),
       t = u - j0;
     return [0, 1, 2].map(c => Pn[3 * j0 + c] * (1 - t) + Pn[3 * j0 + 3 + c] * t);
   };
   return { P, pnAt };
 }
+
+// ---------- constantes con nombre ----------
+export const HAND_LEN_K = 0.79; // largo de la mano ≈ 0,79 × antebrazo
+export const KNUCKLE_W_K = 0.45; // ancho de nudillos ≈ 0,45 × largo de la mano
+export const KNUCKLE_CIRC_WRIST_K = 1.04; // contorno de nudillos ≈ 1,04 × muñeca
+export const KNUCKLE_CIRC_MIN_K = 2.4; // contorno de nudillos nunca menor que 2,4 × ancho (sección posible)
+export const KNUCKLE_CIRC_K = 2.45; // contorno de nudillos si el usuario da el ancho
+export const HAND_CIRC_EXP = 1.6; // exponente de corrección del grosor de la mano por iteración
+export const HAND_BLEND = [0.3, 2.7]; // la mano empieza 0,3 cm tras la muñeca y se mezcla en 2,7 cm
+export const SECTION_HALF_W = 0.25; // media anchura (cm) de las rodajas de sección
+export const SECTION_LINK_R = 0.7; // radio (cm) para unir puntos de una misma sección
+export const FIT_ITERS = 12,
+  FIT_PROFILE_ITERS = 8,
+  HAND_ITERS = 10;
 
 // ---------- validación ----------
 // Rangos en cm: amplios, sólo filtran errores de tecleo y valores imposibles.
@@ -425,19 +453,9 @@ function mcpSection(base, P, wc, a, hand) {
   const Q = [];
   for (const i of hand) {
     const p = [P[3 * i] - wc[0], P[3 * i + 1] - wc[1], P[3 * i + 2] - wc[2]];
-    if (Math.abs(dot(p, a) - d0) < 0.25) Q.push([dot(p, u), dot(p, v)]);
+    if (Math.abs(dot(p, a) - d0) < SECTION_HALF_W) Q.push([dot(p, u), dot(p, v)]);
   }
-  const lab = components(Q, 0.7),
-    cnt = new Map();
-  for (const l of lab) cnt.set(l, (cnt.get(l) || 0) + 1);
-  let big = -1,
-    bc = -1;
-  for (const [l, c] of cnt)
-    if (c > bc) {
-      bc = c;
-      big = l;
-    }
-  const R = Q.filter((_, i) => lab[i] === big);
+  const R = largestComponent(Q);
   if (R.length < 3) throw new Error('No se encontró la sección de los nudillos: revisa largo y ancho de la mano.');
   const H = hull2d(R),
     [br, ang] = maxCaliper(H);
@@ -450,7 +468,7 @@ function handFit(base, P1, wc, t, tgt) {
     hand = [];
   for (let i = 0; i < n; i++) {
     const d = (P1[3 * i] - wc[0]) * t[0] + (P1[3 * i + 1] - wc[1]) * t[1] + (P1[3 * i + 2] - wc[2]) * t[2];
-    if (d > 0.3) hand.push(i);
+    if (d > HAND_BLEND[0]) hand.push(i);
   }
   const M0 = mcpSection(base, P1, wc, a, hand);
   const cen3 = [0, 1, 2].map(c => M0.cen[0] * M0.u[c] + M0.cen[1] * M0.v[c]);
@@ -460,7 +478,7 @@ function handFit(base, P1, wc, t, tgt) {
     const P = Float32Array.from(P1);
     for (const i of hand) {
       const X = [P1[3 * i] - wc[0], P1[3 * i + 1] - wc[1], P1[3 * i + 2] - wc[2]];
-      const w = smooth((dot(X, t) - 0.3) / 2.7);
+      const w = smooth((dot(X, t) - HAND_BLEND[0]) / HAND_BLEND[1]);
       if (w <= 0) continue;
       const da = dot(X, a),
         Y = [X[0] - cen3[0], X[1] - cen3[1], X[2] - cen3[2]],
@@ -475,12 +493,12 @@ function handFit(base, P1, wc, t, tgt) {
     s1 = 1,
     s2 = 1,
     P = P1,
-    M = M0,
-    before = { HL: M0.HL, br: M0.br, circ: M0.circ };
-  for (let it = 0; it < 10; it++) {
+    M = M0;
+  const before = { HL: M0.HL, br: M0.br, circ: M0.circ };
+  for (let it = 0; it < HAND_ITERS; it++) {
     sa *= tgt.HL / M.HL;
     s1 *= tgt.br / M.br;
-    s2 *= Math.pow(tgt.circ / M.circ, 1.6);
+    s2 *= Math.pow(tgt.circ / M.circ, HAND_CIRC_EXP);
     s2 = Math.min(2.5, Math.max(0.4, s2));
     s1 = Math.min(2.5, Math.max(0.4, s1));
     sa = Math.min(1.8, Math.max(0.5, sa));
@@ -501,10 +519,12 @@ export function fit(base, inp, log = () => {}) {
     tWr = inp.hombro_muneca || inp.hombro_codo + inp.codo_muneca,
     forearm = tWr - tEl;
   const circT = [inp.c_axila, inp.c_biceps, inp.c_codo, inp.c_antebrazo, inp.c_muneca];
-  const HLt = inp.largo_mano || 0.79 * forearm,
-    brT = inp.ancho_nudillos || 0.45 * HLt;
+  const HLt = inp.largo_mano || HAND_LEN_K * forearm,
+    brT = inp.ancho_nudillos || KNUCKLE_W_K * HLt;
   // contorno nudillos: 1,04×muñeca, pero nunca menor que 2,4×ancho (sección físicamente posible)
-  const circHand = inp.ancho_nudillos ? 2.45 * brT : Math.max(1.04 * inp.c_muneca, 2.4 * brT);
+  const circHand = inp.ancho_nudillos
+    ? KNUCKLE_CIRC_K * brT
+    : Math.max(KNUCKLE_CIRC_WRIST_K * inp.c_muneca, KNUCKLE_CIRC_MIN_K * brT);
   const tape0 = tapeFn(base, V0);
   const kn = { elO: m.s_tip - m.S_EL, wrO: m.s_tip - m.S_WR };
   kn.elN = tEl - (tape0(m.S_EL) - kn.elO);
@@ -520,7 +540,7 @@ export function fit(base, inp, log = () => {}) {
     P = res.P,
     hand = null,
     tgtProf = null;
-  for (let it = 0; it < 12; it++) {
+  for (let it = 0; it < FIT_ITERS; it++) {
     const tp = tapeFn(base, P);
     const ax = tp(m.S_AX),
       xs = [ax, (ax + tEl) / 2, tEl, (tEl + tWr) / 2, tWr];
@@ -548,7 +568,7 @@ export function fit(base, inp, log = () => {}) {
     log(`iter ${it}: codo ${tp2(m.S_EL).toFixed(2)} muñeca ${tp2(m.S_WR).toFixed(2)}`);
     kn.elN += eEl;
     kn.wrN += eWr;
-    if (it < 8) {
+    if (it < FIT_PROFILE_ITERS) {
       const meas = gauss1d(
         sg.map(s => {
           const c = circAt(base, P, s);
@@ -690,7 +710,7 @@ export function makeUSDA(base, P, rawName) {
     for (let i = 0; i < A.length; i += k) o.push('(' + Array.from(A.subarray(i, i + k), fx).join(', ') + ')');
     return o.join(', ');
   };
-  let mn = [1e9, 1e9, 1e9],
+  const mn = [1e9, 1e9, 1e9],
     mx = [-1e9, -1e9, -1e9];
   for (let i = 0; i < P.length; i += 3)
     for (let c = 0; c < 3; c++) {
@@ -790,7 +810,7 @@ export function storeZip(files, align = 64) {
   for (const [name, data] of files) {
     const nb = enc.encode(name),
       crc = crc32(data);
-    let pad = (align - ((off + 30 + nb.length + 4) % align)) % align;
+    const pad = (align - ((off + 30 + nb.length + 4) % align)) % align;
     const extra = new Uint8Array(4 + pad);
     const ev = new DataView(extra.buffer);
     ev.setUint16(0, 0x1986, true);
@@ -858,7 +878,6 @@ export const EJEMPLO = {
   c_antebrazo: 30,
   c_muneca: 20,
 };
-export const MIKE = EJEMPLO; // compatibilidad
 
 // ---------- guías de medición (geometría 3D para la vista previa) ----------
 export function stationS(base, P) {
@@ -886,7 +905,7 @@ export function ringLoop(base, P, s0, grow = 0.15) {
   const t = Tat(base, s0),
     e1 = norm(cross(t, [0, 0, 1])),
     e2 = cross(t, e1);
-  let c = [0, 0, 0];
+  const c = [0, 0, 0];
   for (const i of idx) for (let k = 0; k < 3; k++) c[k] += P[3 * i + k] / idx.length;
   const Q = [];
   for (const i of idx) {
@@ -907,7 +926,7 @@ export function outward(base, P, p, s, d = 0.15) {
   // empuja un punto de la superficie hacia fuera del eje
   const idx = slab(base, s, 0.25);
   if (!idx.length) return p;
-  let c = [0, 0, 0];
+  const c = [0, 0, 0];
   for (const i of idx) for (let k = 0; k < 3; k++) c[k] += P[3 * i + k] / idx.length;
   const t = Tat(base, s);
   let v = [p[0] - c[0], p[1] - c[1], p[2] - c[2]];
@@ -945,19 +964,9 @@ export function handGuides(base, P) {
   const Q = [];
   for (const i of hand) {
     const p = [P[3 * i] - wc[0], P[3 * i + 1] - wc[1], P[3 * i + 2] - wc[2]];
-    if (Math.abs(dot(p, a) - S.d0) < 0.25) Q.push([dot(p, S.u), dot(p, S.v)]);
+    if (Math.abs(dot(p, a) - S.d0) < SECTION_HALF_W) Q.push([dot(p, S.u), dot(p, S.v)]);
   }
-  const lab = components(Q, 0.7),
-    cnt = new Map();
-  for (const l of lab) cnt.set(l, (cnt.get(l) || 0) + 1);
-  let big = -1,
-    bc = -1;
-  for (const [l, c] of cnt)
-    if (c > bc) {
-      bc = c;
-      big = l;
-    }
-  const R = Q.filter((_, i) => lab[i] === big),
+  const R = largestComponent(Q),
     H = hull2d(R),
     cx = R.reduce((s, q) => s + q[0], 0) / R.length,
     cy = R.reduce((s, q) => s + q[1], 0) / R.length;

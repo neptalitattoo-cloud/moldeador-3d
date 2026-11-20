@@ -36,8 +36,8 @@
         <label class="check"><input type="checkbox" id="expMed"> Exportar también las guías de medición como capa PNG</label>
       </fieldset>
       <fieldset><legend>Mano <small>(opcional)</small></legend><div class="grid">
-        <label>9. Largo mano<input type="number" inputmode="decimal" step="0.1" id="largo_mano" placeholder="auto"><small class="help" data-for="largo_mano"></small></label>
-        <label>10. Ancho nudillos<input type="number" inputmode="decimal" step="0.1" id="ancho_nudillos" placeholder="auto"><small class="help" data-for="ancho_nudillos"></small></label></div>
+        <label>9. Largo mano<input type="text" inputmode="decimal" autocomplete="off" id="largo_mano" placeholder="auto"><small class="help" data-for="largo_mano"></small></label>
+        <label>10. Ancho nudillos<input type="text" inputmode="decimal" autocomplete="off" id="ancho_nudillos" placeholder="auto"><small class="help" data-for="ancho_nudillos"></small></label></div>
         <p class="hint">Si lo dejas vacío: largo = 0,79 × antebrazo, ancho = 0,45 × largo, contorno nudillos ≈ 1,04 × muñeca.</p></fieldset>
       <fieldset><legend>Capas</legend>
         <label class="file">Capa de tatuaje PNG (transparente, sobre el UV original)<input type="file" id="tat" accept="image/png"></label>
@@ -48,6 +48,7 @@
         <span id="texInfo" class="hint">Piel neutra solo dentro de la silueta del brazo y las manos</span>
         <p class="hint">Procreate importa una sola capa base por modelo: la piel va dentro del USDZ y el tatuaje y las guías se descargan como PNG para insertarlos como capas nuevas (ver instrucciones en el ZIP).</p></fieldset>
       <button type="submit" id="go" class="primary" disabled>Moldear</button>
+      <button type="button" id="cancel" class="ghost" hidden>✕ Cancelar moldeado</button>
       <p id="status" class="status" role="status" aria-live="polite">Cargando modelo base…</p>
     </form>
   </section>

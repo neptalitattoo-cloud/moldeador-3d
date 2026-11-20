@@ -34,11 +34,11 @@ inside=ndi.binary_dilation(isl,iterations=4); a[~inside]=0
 ink=np.where(a[...,None]>1e-3,(im-(1-a[...,None])*s)/np.maximum(a[...,None],1e-3),0)
 ink=np.clip(ink,0,255)
 tat=np.dstack([ink,a*255]).round().astype(np.uint8); tat[a==0]=0
-Image.fromarray(tat,'RGBA').save(OUT+'tatuaje_mike_capa.png',optimize=True)
+Image.fromarray(tat,'RGBA').save(OUT+'tatuaje_capa.png',optimize=True)
 # 5) piel limpia con sangrado de 8 px, transparente fuera
 bleed=ndi.binary_dilation(isl,iterations=8)
 sk=np.zeros((H,W,4),np.uint8); sk[bleed,:3]=np.round(s).astype(np.uint8); sk[bleed,3]=255
-Image.fromarray(sk,'RGBA').save(OUT+'piel_base_mike.png',optimize=True)
+Image.fromarray(sk,'RGBA').save(OUT+'piel_base.png',optimize=True)
 # 6) control: piel ⊕ tatuaje vs original (dentro de islas, sin guías)
 comp=sk[...,:3]*(1-a[...,None])+ink*a[...,None]
 err=np.abs(comp-im)[isl&~guide]; print('error recomposición medio %.2f  p99 %.1f'%(err.mean(),np.percentile(err,99)))

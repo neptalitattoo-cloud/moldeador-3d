@@ -10,6 +10,7 @@ const bin = fs.readFileSync(r('data/brazo_derecho.bin'));
 const base = K.loadBase(meta, bin.buffer.slice(bin.byteOffset, bin.byteOffset + bin.byteLength));
 const EJ = K.EJEMPLO;
 const fitEj = K.fit(base, EJ);
+const GOLDEN_PNG = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
 
 test('ejemplo: todas las medidas a ±0,3 cm, sin NaN y sin pliegues', () => {
   assert.ok(fitEj.P.every(Number.isFinite), 'la malla tiene NaN/Infinity');
@@ -31,20 +32,61 @@ test('rechaza entradas imposibles con un mensaje (nunca una malla con NaN)', () 
     assert.throws(() => K.fit(base, { ...EJ, ...x }), Error, JSON.stringify(x));
 });
 
-test('entradas aleatorias: o error o resultado finito', () => {
-  let seed = 7;
+// Fuzz con semilla fija (reproducible): 520 entradas. Las inválidas deben rechazarse con un mensaje legible;
+// las válidas (≈1 de cada 5) se moldean de verdad y deben dar una malla finita.
+test('fuzz (520 entradas, semilla fija): o error legible o malla finita', () => {
+  let seed = 20261120;
   const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
-  for (let i = 0; i < 6; i++) {
-    const inp = { ...EJ };
-    for (const k of Object.keys(K.RANGOS))
-      if (rnd() < 0.5) inp[k] = [NaN, -5, 0, 1e6, (K.RANGOS[k][0] + K.RANGOS[k][1]) / 2][Math.floor(rnd() * 5)];
+  const ids = Object.keys(K.RANGOS);
+  const raro = () => [NaN, -5, 0, 1e6, -Infinity, Infinity, 1e-9, -0, undefined, null][Math.floor(rnd() * 10)];
+  const dentro = k => {
+    const [lo, hi] = K.RANGOS[k];
+    return lo + (hi - lo) * rnd();
+  };
+  let validas = 0,
+    rechazadas = 0;
+  for (let i = 0; i < 520; i++) {
+    const inp = {},
+      modo = rnd();
+    for (const k of ids) {
+      if (modo < 0.2)
+        inp[k] = EJ[k] == null ? undefined : EJ[k] * (0.75 + 0.5 * rnd()); // cerca del ejemplo
+      else if (modo < 0.5)
+        inp[k] = rnd() < 0.15 ? raro() : dentro(k); // casi todo dentro de rango
+      else inp[k] = rnd() < 0.5 ? raro() : dentro(k) * (rnd() < 0.5 ? 1 : 4 * rnd()); // basura
+    }
+    for (const k of ids) if (inp[k] === undefined) delete inp[k];
+    let ok = true;
+    try {
+      K.validateInputs(inp);
+    } catch (e) {
+      ok = false;
+      assert.ok(e instanceof Error && e.message.length > 5 && !/undefined|NaN/.test(e.message), e.message);
+    }
+    if (!ok) {
+      rechazadas++;
+      assert.throws(() => K.fit(base, inp), Error);
+      continue;
+    }
+    if (validas >= 60) continue; // limita el tiempo: 60 moldeados completos
+    validas++;
     try {
       const o = K.fit(base, inp);
-      assert.ok(o.P.every(Number.isFinite));
+      assert.ok(o.P.every(Number.isFinite), JSON.stringify(inp));
     } catch (e) {
-      assert.ok(e instanceof Error && e.message.length > 3);
+      assert.ok(e instanceof Error && !/undefined|null|NaN/.test(e.message), `${JSON.stringify(inp)}: ${e.message}`);
     }
   }
+  assert.ok(validas >= 40 && rechazadas >= 200, `validas ${validas}, rechazadas ${rechazadas}`);
+});
+
+// Golden: el USDZ del ejemplo es determinista (ZIP sin fechas). Si cambias el ajuste o el formato a propósito,
+// sustituye GOLDEN_USDZ por el valor «actual» que muestra el fallo.
+const GOLDEN_USDZ = 'fb3f3c7a8d998425f5d970e2592199cbeac7f6c91cbea8b1478a7832e06b6d53';
+test('golden: USDZ del ejemplo idéntico byte a byte', async () => {
+  const { createHash } = await import('node:crypto');
+  const z = K.makeUSDZ(base, fitEj.P, 'brazo_ejemplo', GOLDEN_PNG);
+  assert.equal(createHash('sha256').update(z).digest('hex'), GOLDEN_USDZ);
 });
 
 test('usdIdent devuelve siempre un identificador USD válido', () => {

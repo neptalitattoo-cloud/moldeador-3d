@@ -24,15 +24,21 @@ Push this folder as the repository root (or `/docs`) and enable *Settings → Pa
 
 ## Tests
 ```
-node --test tests/fit.test.mjs                 # fit of the sample within ±0.3 cm, no NaN, valid USDZ
-python3 herramientas/validar_usdz.py x.usdz    # USD validation framework (usd-core ≥ 24.08)
+npm ci
+npm test                                       # fit within ±0.3 cm, fuzz (520 seeded inputs), golden USDZ hash
+npm run lint && npm run format:check           # ESLint (0 warnings) + Prettier (printWidth 120)
+npx playwright install webkit chromium && npm run e2e   # fit → USDZ → reopen, stale downloads, cancel, CSP, offline, SW N→N+1, iPhone touch
+python3 -m unittest discover -s tests -p 'test_*.py'    # Python tools read the repo .bin
+node tests/make_usdz.mjs out && python3 herramientas/validar_usdz.py out/*.usdz   # usd-core ≥ 26.3
+python3 herramientas/version_sw.py --check && python3 herramientas/check_csp.py
 ```
-CI (`.github/workflows/comprobar.yml`) runs the Node tests and checks that cache versions match.
+CI (`.github/workflows/comprobar.yml`) runs all of the above.
 
 ## Releasing
-Bump the cache version everywhere at once: `python3 herramientas/version_sw.py 6` (rewrites `?v=N` and `moldeador-vN`).
-Navigations are network-first; versioned assets are cache-first, so old and new files never mix. Open pages show «Nueva versión… Recargar».
-Content-Security-Policy is a `<meta>` in `index.html`; if you edit the importmap, update its sha256 hash.
+Bump the cache version everywhere at once: `python3 herramientas/version_sw.py 7` (rewrites `?v=N`, `moldeador-vN` and `herramientas/.version_hash`).
+CI fails if any precached file changed without a version bump.
+Navigations are network-first with a 3 s timeout, then the cached copy; versioned assets are cache-first, so old and new files never mix. Open pages show «Nueva versión… Recargar».
+Content-Security-Policy is a `<meta>` in `index.html`; if you edit the importmap, update its sha256 hash (`check_csp.py` prints the right one).
 
 ## Structure
 - `index.html`, `css/app.css`, `js/app.js` (UI), `js/core.js` (fitting math + validation, no DOM), `js/fit-worker.js`, `js/view2d.js`, `js/parts.js` (body-part registry)

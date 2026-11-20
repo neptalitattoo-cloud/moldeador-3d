@@ -9,7 +9,7 @@ from scipy.interpolate import PchipInterpolator, UnivariateSpline
 from scipy.ndimage import gaussian_filter1d
 REPO=pathlib.Path(__file__).resolve().parents[2]
 def load_base(data=REPO/'data'/'brazo_derecho'):
-    meta=json.load(open(f'{data}.json')); raw=open(f'{data}.bin','rb').read()
+    meta=json.loads(pathlib.Path(f'{data}.json').read_text()); raw=pathlib.Path(f'{data}.bin').read_bytes()
     def blob(k):
         off,n,dt=meta['blobs'][k]; return np.frombuffer(raw,dtype=dt,count=n,offset=off)
     return (blob('V0').reshape(-1,3).astype(np.float64), blob('VT').reshape(-1,2).astype(np.float64),
@@ -18,7 +18,8 @@ SRC=os.environ.get('MOLDEADOR_SRC_OBJ')
 if SRC: V0,VT,F,FT=load_obj(SRC)
 else: V0,VT,F,FT,_META=load_base()
 TEX=2048
-LM_PX={'kanji':(617,297),'LE':(281,867),'Anna':(1052,880),'band_top':(500,1605),'band_bot':(500,1712)}
+# Punto de referencia en el UV (px de la textura 2048): cara lateral externa del brazo; fija la «línea externa».
+LM_PX={'ref_lateral':(617,297)}
 
 def uv_to_bary(px):
     u=px[0]/TEX; v=1-px[1]/TEX
@@ -57,8 +58,8 @@ def measure(V,label=''):
     s_v,off,idx=project(V,C,T)
     # s measured from top
     top=ss[-1]
-    # outer direction: from centreline towards kanji (lateral)
-    kp=lm_pos(V,'kanji'); sk,ok_,ik=project(kp[None],C,T); outer_dir=ok_[0]/np.linalg.norm(ok_[0])
+    # outer direction: from centreline towards the lateral reference point
+    kp=lm_pos(V,'ref_lateral'); sk,ok_,ik=project(kp[None],C,T); outer_dir=ok_[0]/np.linalg.norm(ok_[0])
     # circumference at s: perpendicular slice convex hull perimeter
     def circ(s0):
         m=np.abs(s_v-s0)<0.25
