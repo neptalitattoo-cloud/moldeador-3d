@@ -6,7 +6,7 @@ Web estática (HTML + JS, sin servidor). Escribes las medidas del cliente, pulsa
 1. Malla base: brazo limpio original (49.314 vértices, UV original intacto). La capa base es piel neutra SOLO dentro de las islas UV (silueta del brazo y las manos) con 6 px de sangrado y transparente fuera; o tu propia capa base.
 2. Largos: se remapea por tramos el eje del brazo (curva PCHIP monótona, nunca pliega) hasta que la cinta medida por la cara externa desde la punta del hombro da hombro→codo y hombro→muñeca exactos.
 3. Contornos: factor radial suave a lo largo del eje (perfil PCHIP entre axila, mitad bíceps, codo, mitad antebrazo y muñeca) con 8 pasadas de corrección densa + 4 de afinado por estaciones.
-4. Mano: largo = 0,79 × antebrazo, ancho nudillos = 0,45 × largo, contorno nudillos = máx(1,04 × muñeca; 2,4 × ancho). Escalado anisótropo en el marco de la mano con transición smoothstep de 0,3 a 3 cm después de la muñeca. Si escribes largo de mano o ancho de nudillos se usan tus valores.
+4. Mano: largo = 0,79 × antebrazo; contorno nudillos (medida 10, cinta alrededor de la mano sin el pulgar) = máx(1,04 × muñeca; 2,4 × ancho típico), siempre entre 15 y 32 cm; el ancho de la sección se deduce del contorno (contorno ÷ 2,45). Escalado anisótropo en el marco de la mano con transición smoothstep de 0,3 a 3 cm después de la muñeca. Si escribes largo de mano o contorno de nudillos se usan tus valores (v8: la medida 10 es el **contorno** de nudillos, 15–32 cm, cinta alrededor de la mano sin el pulgar; antes era «ancho»). Avisa si el contorno parece un ancho (menor que 0,9 × muñeca) o si la mano sale demasiado ancha para su largo.
 5. Capas: Procreate importa una sola capa base por modelo, así que la piel va en el USDZ y las guías de tatuajes existentes y la capa de tatuaje (PNG transparente que subes) se descargan como PNG aparte del mismo tamaño, para insertarlas como capas nuevas en «Mostrar textura 2D». Opción para fundir las guías en la capa base.
 6. Comprobación: tabla objetivo/resultado y conteo de caras invertidas.
 
@@ -40,3 +40,21 @@ Arrastra para mover, pellizca o usa la rueda para hacer zoom y toca dos veces pa
 - Si cambias una medida después de moldear, las descargas se desactivan hasta que vuelvas a moldear.
 - Texturas limitadas a 2048 px en iPhone y escaladas manteniendo la proporción, para no agotar la memoria de Safari.
 - Funciona sin conexión; cuando hay una versión nueva aparece «Nueva versión… Recargar».
+
+
+## Foto del brazo (v8, mejorada en v9)
+1. En «Foto del brazo» toca 📷 *Hacer foto* (o 🖼️ *Elegir foto*). La foto no sale del dispositivo ni se guarda.
+2. 💧 *Cuentagotas*: toca la piel con buena luz (no en brillos ni sombras) → «Usar este tono». El tono se aplica a todo el modelo y se recuerda sólo mientras la pestaña esté abierta (el siguiente cliente empieza con piel neutra). Si usas una «Capa base propia», el tono no se ve.
+3. ✂️ *Recortar*: rodea el tatuaje con el dedo, escribe el alto real en cm de lo que has rodeado (sin contar el borde suave), o usa 📏 *Medir* sobre algo de largo conocido (la medida se conserva mientras sigas con la misma foto), ajusta el borde suave y toca «Añadir recorte». Puedes añadir varios.
+4. Toca «Listo» y, en la ficha del recorte, escribe «Desde hombro» (cm desde la punta del hombro hasta el centro del tatuaje) y el lado (exterior, delante, interior, detrás u otro ángulo) y el giro.
+5. Afina con «✋ Mover en 2D»: arrastra el recorte en la textura plana (lo que agarras se queda bajo el dedo); si empiezas fuera del recorte mueves la vista. Pellizca sobre el recorte para el tamaño y gira con dos dedos.
+6. Descarga como siempre: el tatuaje va en la capa PNG de tatuaje (o dentro de la capa base si marcas «Fundir»).
+
+## Novedades v9 (auditoría)
+- **Medidas reales**: el recorte se envuelve con una carta medida sobre el brazo ya ajustado (arco real alrededor de cada sección y largo real hacia la mano). Pruebas automáticas: un recorte de 8 × 10 cm mide 8 × 10 cm en la piel con error ≤ 0,8 % (≈ 1 mm) sin girar, en brazo, antebrazo y muñeca, por todos los lados y cruzando la costura de la UV; girado 30–90°, hasta ±5 %.
+- «Alto» es el de lo que rodeas (antes contaba también el margen del borde suave y salía más pequeño).
+- Da la vuelta completa al brazo (360°) y llega hasta unos 3–4 cm pasada la muñeca; más allá avisa y se corta.
+- Arrastrar ya no se pierde: el punto agarrado sigue al dedo. Pellizcar gira hacia el mismo lado que los dedos.
+- Pintado con WebGL (más rápido) y sin líneas en las costuras (6 px de sangrado fuera de las islas UV).
+- Editor: el foco entra y vuelve al cerrar, se libera la memoria de la foto al cerrar, fotos con giro EXIF del iPhone se ven derechas.
+- Aviso al recargar si hay recortes (no se guardan).
