@@ -1,4 +1,4 @@
-# Separa la textura de Neptali en: piel limpia (solo dentro de las islas UV + sangrado) y capa de tatuaje (tinta, transparente fuera)
+# Separa una textura de referencia en: piel limpia (solo dentro de las islas UV + sangrado) y capa de tatuaje (tinta, transparente fuera)
 import sys
 
 sys.path.insert(0, str(__import__('pathlib').Path(__file__).resolve().parent / 'lib'))

@@ -2,7 +2,7 @@
 //  - promedio robusto de color (cuentagotas)
 //  - borde suave de un recorte (desenfoque de la máscara)
 //  - carta de la superficie del brazo: (cm desde el hombro, cm alrededor del brazo) ↔ UV, para colocar tatuajes
-import { gauss1d, dot, cross, norm } from './core.js?v=12';
+import { gauss1d, dot, cross, norm } from './core.js?v=13';
 
 // ---------- color ----------
 export const hex = (r, g, b) => '#' + [r, g, b].map(x => Math.round(x).toString(16).padStart(2, '0')).join('');
@@ -113,15 +113,52 @@ export function medianColor(rgba, mask, w, h) {
   });
 }
 /**
- * Filas (y columnas) de TINTA de un recorte: una fila es de tinta si más de `frac` de sus píxeles dentro del lazo
- * (alpha ≥ 128) se alejan más de `thr` (distancia RGB) del tono de piel. Así el alto que escribe el tatuador (el de la
- * tinta) no se aplica también al hueco que deja el dedo alrededor.
- *   rgba: w×h RGBA; alpha: w×h (la máscara del lazo, sin borde suave);
- *   skin: [r, g, b] o null (= mediana del borde interior del lazo).
- * Las filas con muy pocos píxeles dentro del lazo (la punta del trazo) no cuentan, y hacen falta 2 filas seguidas
- * (un pelo suelto no es tinta). Devuelve { top, bottom, left, right, skin } (px, inclusivos) o null si no se distingue.
+ * Tono de la piel POR COLUMNA (H30): mediana [r, g, b] de los píxeles del anillo (ring ≥ 128) en las columnas x ± R.
+ * Devuelve Int16Array(3·w); −1 en las columnas con menos de minN muestras (ahí se usa el tono global).
  */
-export function inkRows(rgba, alpha, w, h, skin, thr = 45, frac = 0.1) {
+export function colTones(rgba, ring, w, h, R = 8, minN = 5) {
+  const out = new Int16Array(3 * w).fill(-1),
+    hist = [new Int32Array(256), new Int32Array(256), new Int32Array(256)];
+  let n = 0;
+  const add = (x, s) => {
+    if (x < 0 || x >= w) return;
+    for (let y = 0; y < h; y++) {
+      const i = y * w + x;
+      if (ring[i] < 128) continue;
+      for (let c = 0; c < 3; c++) hist[c][rgba[4 * i + c]] += s;
+      n += s;
+    }
+  };
+  for (let x = 0; x < R; x++) add(x, 1);
+  for (let x = 0; x < w; x++) {
+    add(x + R, 1); // ventana [x − R, x + R]
+    add(x - R - 1, -1);
+    if (n < minN) continue;
+    for (let c = 0; c < 3; c++) {
+      let acc = 0,
+        v = 0;
+      while (v < 255 && (acc += hist[c][v]) * 2 <= n) v++;
+      out[3 * x + c] = v;
+    }
+  }
+  return out;
+}
+/**
+ * Caja de la TINTA de un recorte (H9, H30): así el alto que escribe el tatuador (el de la tinta) no se aplica también al
+ * hueco de piel que deja el dedo alrededor.
+ *   rgba: w×h RGBA; alpha: w×h (la máscara del lazo, sin borde suave);
+ *   skin: [r, g, b] o null (= mediana del borde interior del lazo);
+ *   ring: w×h o null: anillo por fuera del lazo; si se da, el tono de la piel se mide POR COLUMNA (mediana en x ± 8 px),
+ *   para que la sombra lateral del brazo no cuente como tinta.
+ * Un píxel es de tinta si se aleja más de `thr` (distancia RGB) del tono de su columna y al menos 5 de los 9 de su
+ * entorno 3 × 3 también lo son (sin poros ni ruido). Una fila (o columna) es de tinta si tiene al menos
+ * max(3 px, 2 % de la fila con más tinta) píxeles de tinta: un número de píxeles, no un % del ancho del lazo, así que
+ * los tallos y las letras finas cuentan aunque el lazo vaya holgado. Hacen falta 2 filas seguidas.
+ * Si las filas de tinta forman grupos separados por un hueco (un pelo en el hueco del lazo, trazos sueltos), la caja
+ * los incluye todos y `dudoso` = true: el editor pide revisarla o marcar el alto a mano.
+ * Devuelve { top, bottom, left, right, skin, dudoso } (px, inclusivos) o null si no se distingue.
+ */
+export function inkRows(rgba, alpha, w, h, skin, ring = null, thr = 45) {
   const inside = i => alpha[i] >= 128;
   let tone = skin;
   if (!tone) {
@@ -136,8 +173,35 @@ export function inkRows(rgba, alpha, w, h, skin, thr = 45, frac = 0.1) {
     tone = medianColor(rgba, edge, w, h);
   }
   if (!tone) return null;
+  const cols = ring ? colTones(rgba, ring, w, h) : null;
+  // el tono de una columna sólo vale si es piel con otra luz (misma cromaticidad, más oscura o más clara): donde el lazo
+  // holgado corta las esquinas del dibujo, el anillo de fuera pasa por la tinta y esa columna no puede tomarla por piel
+  if (cols) {
+    const s0 = tone[0] + tone[1] + tone[2] || 1;
+    for (let x = 0; x < w; x++) {
+      if (cols[3 * x] < 0) continue;
+      const s1 = cols[3 * x] + cols[3 * x + 1] + cols[3 * x + 2] || 1,
+        ratio = s1 / s0;
+      let dc = 0;
+      for (let c = 0; c < 3; c++) dc = Math.max(dc, Math.abs(cols[3 * x + c] / s1 - tone[c] / s0));
+      if (dc > 0.035 || ratio < 0.4 || ratio > 1.6) cols[3 * x] = cols[3 * x + 1] = cols[3 * x + 2] = -1;
+    }
+  }
+  // 1) tinta en bruto: lejos del tono de la piel de su columna
   const t2 = thr * thr,
-    rowN = new Int32Array(h),
+    raw = new Uint8Array(w * h);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (!inside(i)) continue;
+      const own = cols && cols[3 * x] >= 0,
+        dr = rgba[4 * i] - (own ? cols[3 * x] : tone[0]),
+        dg = rgba[4 * i + 1] - (own ? cols[3 * x + 1] : tone[1]),
+        db = rgba[4 * i + 2] - (own ? cols[3 * x + 2] : tone[2]);
+      if (dr * dr + dg * dg + db * db > t2) raw[i] = 1;
+    }
+  // 2) sin ruido: cuenta si al menos 5 de los 9 píxeles de su entorno 3 × 3 son tinta
+  const rowN = new Int32Array(h),
     rowK = new Int32Array(h),
     colN = new Int32Array(w),
     colK = new Int32Array(w);
@@ -145,21 +209,23 @@ export function inkRows(rgba, alpha, w, h, skin, thr = 45, frac = 0.1) {
     for (let x = 0; x < w; x++) {
       const i = y * w + x;
       if (!inside(i)) continue;
-      const dr = rgba[4 * i] - tone[0],
-        dg = rgba[4 * i + 1] - tone[1],
-        db = rgba[4 * i + 2] - tone[2];
       rowN[y]++;
       colN[x]++;
-      if (dr * dr + dg * dg + db * db > t2) {
+      if (!raw[i]) continue;
+      let k = 0;
+      for (let yy = Math.max(0, y - 1); yy <= Math.min(h - 1, y + 1); yy++)
+        for (let xx = Math.max(0, x - 1); xx <= Math.min(w - 1, x + 1); xx++) k += raw[yy * w + xx];
+      if (k >= 5) {
         rowK[y]++;
         colK[x]++;
       }
     }
-  const span = (N, Kf) => {
+  // 3) filas / columnas de tinta: un número mínimo de píxeles, relativo a la fila con más tinta (no al lazo)
+  const span = (N, Kc) => {
     let max = 0;
-    for (const v of N) max = Math.max(max, v);
-    const minN = Math.max(4, 0.05 * max),
-      ink = k => N[k] >= minN && Kf[k] > frac * N[k];
+    for (const v of Kc) max = Math.max(max, v);
+    const need = Math.max(3, 0.02 * max),
+      ink = k => N[k] >= 4 && Kc[k] >= need;
     let a = -1,
       b = -1;
     for (let k = 0; k + 1 < N.length; k++)
@@ -172,12 +238,50 @@ export function inkRows(rgba, alpha, w, h, skin, thr = 45, frac = 0.1) {
         b = k;
         break;
       }
-    return a >= 0 && b >= a ? [a, b] : null;
+    if (a < 0 || b < a) return null;
+    // ¿grupos separados por un hueco sin tinta? (un pelo en el hueco del lazo, trazos sueltos)
+    const gap = Math.max(2, Math.round(0.01 * N.length));
+    let run = 0,
+      split = false;
+    for (let k = a; k <= b; k++)
+      if (!ink(k)) run++;
+      else {
+        if (run >= gap) split = true;
+        run = 0;
+      }
+    return { a, b, split };
   };
   const r = span(rowN, rowK),
     c = span(colN, colK);
   if (!r || !c) return null;
-  return { top: r[0], bottom: r[1], left: c[0], right: c[1], skin: tone };
+  // sólo las filas deciden si es dudoso: el alto (la escala) sale de ellas; las columnas sólo dan el ancho mostrado
+  return { top: r.a, bottom: r.b, left: c.a, right: c.b, skin: tone, dudoso: r.split };
+}
+
+// ---------- enderezar la foto (H29) ----------
+/**
+ * Ángulo (radianes, como ctx.rotate: positivo = horario en pantalla) que deja vertical el eje p → q (p hacia el hombro,
+ * q hacia la mano), con el hombro arriba. 0 = ya está vertical.
+ */
+export const straightenAngle = (p, q) => Math.atan2(q[0] - p[0], q[1] - p[1]);
+/**
+ * Geometría de girar una foto w×h el ángulo a alrededor de su centro, reducida para que el lado mayor no pase de max:
+ * { W, H, k, map(x, y) → [x', y'] } (map lleva un punto de la foto de antes a la girada).
+ */
+export function rotateGeom(w, h, a, max = Infinity) {
+  const c = Math.cos(a),
+    s = Math.sin(a),
+    wr = w * Math.abs(c) + h * Math.abs(s),
+    hr = w * Math.abs(s) + h * Math.abs(c),
+    k = Math.min(1, max / Math.max(wr, hr)),
+    W = Math.max(1, Math.round(wr * k)),
+    H = Math.max(1, Math.round(hr * k));
+  const map = (x, y) => {
+    const dx = x - w / 2,
+      dy = y - h / 2;
+    return [W / 2 + k * (c * dx - s * dy), H / 2 + k * (s * dx + c * dy)];
+  };
+  return { W, H, k, map };
 }
 
 // ---------- desenrollar la foto de un brazo curvo (H22) ----------
@@ -189,13 +293,26 @@ export const colOfArc = (s, xc, R) => xc + R * Math.sin(Math.max(-1.5707, Math.m
 /**
  * Remuestreo por columnas para desenrollar [x0, x1] (px de la foto): columna X del recorte (k px por px de arco) ←
  * columna sx[X] (continua) de la foto. xOf(x) lleva una x de la foto a la x del recorte (para la máscara del lazo).
+ * xm (opcional, H31): columna de la foto que debe quedar en el centro del recorte (el centro de la tinta); el recorte
+ * se ensancha por el lado que haga falta y esas columnas (fuera de [x0, x1]) llevan sx = NaN (quedan transparentes).
  */
-export function unrollCols(x0, x1, xc, R, k = 1) {
-  const s0 = arcOfCol(x0, xc, R),
-    s1 = arcOfCol(x1, xc, R),
-    w = Math.max(1, Math.round((s1 - s0) * k)),
+export function unrollCols(x0, x1, xc, R, k = 1, xm = null) {
+  const a0 = arcOfCol(x0, xc, R),
+    a1 = arcOfCol(x1, xc, R);
+  let s0 = a0,
+    s1 = a1;
+  if (xm != null) {
+    const sm = arcOfCol(xm, xc, R),
+      hs = Math.max(sm - a0, a1 - sm);
+    s0 = sm - hs;
+    s1 = sm + hs;
+  }
+  const w = Math.max(1, Math.round((s1 - s0) * k)),
     sx = new Float64Array(w);
-  for (let X = 0; X < w; X++) sx[X] = colOfArc(s0 + (X + 0.5) / k, xc, R);
+  for (let X = 0; X < w; X++) {
+    const s = s0 + (X + 0.5) / k;
+    sx[X] = s < a0 - 1e-9 || s > a1 + 1e-9 ? NaN : colOfArc(s, xc, R);
+  }
   return { s0, s1, w, sx, xOf: x => (arcOfCol(x, xc, R) - s0) * k };
 }
 
@@ -524,6 +641,14 @@ export function surfaceChart(base, P, tape) {
     for (let k = Math.max(jLo, j - OW); k <= Math.min(jHi, j + OW); k++) v.push(...offJ[k]);
     if (v.length >= 3) off[j] = median(v);
   }
+  // H40: vértices válidos agrupados por rodaja (decalCoords sólo recorre las rodajas que puede tocar el recorte)
+  const vStart = new Int32Array(nC + 1),
+    vOrder = new Int32Array(n),
+    jOfV = i => Math.min(nC - 1, Math.max(0, Math.round(jf[i])));
+  for (let i = 0; i < n; i++) if (valid[i]) vStart[jOfV(i) + 1]++;
+  for (let j = 0; j < nC; j++) vStart[j + 1] += vStart[j];
+  const pos = vStart.slice(0, nC);
+  for (let i = 0; i < n; i++) if (valid[i]) vOrder[pos[jOfV(i)]++] = i;
   const dOfJ = x => lerpJ(j => off[j], x) + Yat(x, 0);
   const dMin = dOfJ(jHi),
     dMax = dOfJ(jLo);
@@ -578,6 +703,8 @@ export function surfaceChart(base, P, tape) {
     vL,
     d: Float32Array.from(jf, (x, i) => (valid[i] ? dOfJ(x) : 0)),
     hand,
+    vOrder,
+    vStart,
     // por rodaja / funciones
     jLo,
     jHi,
@@ -631,20 +758,44 @@ export function coneMaps(rho0) {
  *   largo del brazo), origen en el centro del tatuaje, ya girado. Da la vuelta completa (360°): x ∈ [−L/2, L/2].
  * dec = { d: cm desde el hombro al centro (por la línea exterior), ang: grados alrededor del brazo (0 exterior),
  *         rot: grados de giro }; W: ancho del tatuaje en cm (para saber si es una banda; opcional).
+ * H (opcional, H40): alto del tatuaje en cm; si se da, sólo se calculan los vértices de las rodajas que el tatuaje puede
+ * tocar (su media diagonal + 2 cm, y 3 rodajas de margen): el resto queda fuera de `ok` (el arrastre no recorre los
+ * 49 314 vértices en cada fotograma). Sin H, todos.
  * Devuelve también rx/ry (sin la corrección del cono ni el giro) y dev/undev (ida y vuelta de la corrección).
  */
-export function decalCoords(chart, dec, W = 0) {
+export function decalCoords(chart, dec, W = 0, H = 0) {
   const n = chart.valid.length,
     x = new Float32Array(n),
     y = new Float32Array(n),
     rx = new Float32Array(n),
-    ry = new Float32Array(n),
-    ok = chart.valid;
+    ry = new Float32Array(n);
   const th = (dec.ang * Math.PI) / 180,
     rot = ((dec.rot || 0) * Math.PI) / 180,
     c = Math.cos(-rot),
     s = Math.sin(-rot);
   const jc = chart.jOfD(dec.d);
+  let ok = chart.valid,
+    idx = null;
+  if (H > 0 && chart.vStart) {
+    const reach = Math.hypot(W, H) / 2 + 2;
+    let ja = jc,
+      jb = jc;
+    for (let q = 0; q < 8; q++) {
+      const ph = -Math.PI + (q * Math.PI) / 4,
+        y0 = chart.Yat(jc, ph);
+      for (const yy of [y0 - reach, y0 + reach]) {
+        const j = chart.jOfY(yy, ph);
+        ja = Math.min(ja, j);
+        jb = Math.max(jb, j);
+      }
+    }
+    const nC = chart.vStart.length - 1,
+      j0 = Math.max(0, Math.floor(ja) - 3),
+      j1 = Math.min(nC - 1, Math.ceil(jb) + 3);
+    idx = chart.vOrder.subarray(chart.vStart[j0], chart.vStart[j1 + 1]);
+    ok = new Uint8Array(n);
+    for (const i of idx) ok[i] = 1;
+  }
   // Y del centro a cada ángulo (tabla) y arco del lado elegido en cada rodaja
   const NT = 360,
     yc = new Float64Array(NT + 1);
@@ -652,8 +803,10 @@ export function decalCoords(chart, dec, W = 0) {
   // estrechamiento local del brazo (cono): las filas se desenrollan como arcos concéntricos, sin cizalla en diagonal
   const rho0 = coneRho0(chart, jc, th, W),
     { dev, undev } = coneMaps(rho0);
-  const arcTh = new Map();
-  for (let i = 0; i < n; i++) {
+  const arcTh = new Map(),
+    m = idx ? idx.length : n;
+  for (let q = 0; q < m; q++) {
+    const i = idx ? idx[q] : q;
     if (!ok[i]) continue;
     const j0 = Math.floor(chart.jf[i]);
     let a0 = arcTh.get(j0);
@@ -911,21 +1064,72 @@ export function uvLocator(base, chart, G = 128) {
     return null;
   };
 }
+const wrapDeg = a => ((((a + 540) % 360) + 360) % 360) - 180;
 /**
- * Giro del recorte tras girar dos dedos dRot grados en pantalla (y hacia abajo): el dibujo gira igual que los dedos,
- * también donde la isla de la UV está volteada.
+ * Giro del recorte tras girar dos dedos dRot grados en pantalla (y hacia abajo), en la vista 2D (textura plana).
+ * La UV no conserva los ángulos (H36): girar el dibujo 15° sobre la piel podía verse girar 19,9° en la vista plana. Se
+ * busca el giro sobre la piel que, visto en la vista plana alrededor del centro del recorte, mide exactamente lo que
+ * giraron los dedos (y hacia el mismo lado, también donde la isla de la UV está volteada).
  */
 export function pinchRot(tris, rot, dRot) {
-  const hit = decalPointUV(tris);
-  let sg = 1;
-  if (hit) {
-    const A = affine3(
-      hit.tri.p,
-      hit.tri.q.map(([u, v]) => [u, 1 - v]),
-    );
-    if (A && A[0] * A[3] - A[1] * A[2] < 0) sg = -1; // isla UV volteada
+  const h = decalPointUV(tris);
+  if (!h) return wrapDeg(rot + dRot);
+  // cm del marco → vista plana (x = u, y = 1 − v hacia abajo)
+  const A = affine3(
+    h.tri.p,
+    h.tri.q.map(([u, v]) => [u, 1 - v]),
+  );
+  if (!A) return wrapDeg(rot + dRot);
+  // ángulo en la vista plana del eje x del dibujo tras girarlo d radianes sobre la piel
+  const scr = d => Math.atan2(A[1] * Math.cos(d) + A[3] * Math.sin(d), A[0] * Math.cos(d) + A[2] * Math.sin(d));
+  const sg = A[0] * A[3] - A[1] * A[2] < 0 ? -1 : 1, // isla UV volteada
+    a0 = scr(0),
+    want = (dRot * Math.PI) / 180;
+  let lo = -Math.PI / 2,
+    hi = Math.PI / 2;
+  for (let it = 0; it < 40; it++) {
+    const mid = (lo + hi) / 2;
+    let e = scr(sg * mid) - a0 - want;
+    e -= 2 * Math.PI * Math.round(e / (2 * Math.PI));
+    if (e < 0) lo = mid;
+    else hi = mid;
   }
-  return ((((rot + sg * dRot + 540) % 360) + 360) % 360) - 180;
+  return wrapDeg(rot + (sg * (lo + hi) * 90) / Math.PI);
+}
+/**
+ * Deformación del dibujo (H32): el mayor error relativo de los 4 bordes y las 2 diagonales del dibujo (W × H cm,
+ * centrado), medidos sobre la malla 3D. Donde la piel se curva en dos direcciones (hombro, codo) la carta no puede ser
+ * plana sin estirar ni torcer: el editor avisa a partir del 5 %. (El percentil de las aristas de cada triángulo que
+ * proponía la auditoría da 7–8 % hasta en el brazo, donde el dibujo mide ±1 %: mide la malla, no el dibujo.)
+ * Las líneas que se salen de la malla (por encima del hombro, más allá de la mano) no cuentan.
+ */
+export function decalStretch(tris, P, W, H, n = 200) {
+  const x = W / 2,
+    y = H / 2,
+    D = Math.hypot(W, H);
+  let worst = 0;
+  for (const [x0, y0, x1, y1, real] of [
+    [-x, -y, x, -y, W],
+    [-x, y, x, y, W],
+    [-x, -y, -x, y, H],
+    [x, -y, x, y, H],
+    [-x, -y, x, y, D],
+    [x, -y, -x, y, D],
+  ]) {
+    let len = 0,
+      prev = null,
+      ok = true;
+    for (let k = 0; k <= n && ok; k++) {
+      const h = decalPoint3D(tris, P, x0 + ((x1 - x0) * k) / n, y0 + ((y1 - y0) * k) / n);
+      if (!h) ok = false;
+      else {
+        if (prev) len += Math.hypot(h.pos[0] - prev[0], h.pos[1] - prev[1], h.pos[2] - prev[2]);
+        prev = h.pos;
+      }
+    }
+    if (ok && real > 0) worst = Math.max(worst, Math.abs(len / real - 1));
+  }
+  return worst;
 }
 /**
  * Nueva posición { d, ang } del recorte para que su punto (gx, gy) (cm en su marco, el que se agarró) quede bajo el

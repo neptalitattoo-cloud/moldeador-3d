@@ -161,7 +161,7 @@ button:disabled {
 }
 .hint {
   color: var(--mut);
-  font-size: 12px;
+  font-size: 13px;
   margin: 6px 0 0;
 }
 #vista {
@@ -336,15 +336,15 @@ canvas.v2d {
 .gl[hidden] {
   display: none;
 }
-.sub {
+/* aclaración bajo el nombre de un campo (sólo dentro de label: el subtítulo de la cabecera no cambia) (H41) */
+label > .sub {
   display: block;
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.2;
-  margin-top: -3px;
 }
 .help {
   color: var(--mut);
-  font-size: 11px;
+  font-size: 13px;
   line-height: 1.25;
 }
 @media (max-width: 820px) {
@@ -478,6 +478,7 @@ input[type='color'] {
   grid-template-areas:
     'th nm nm x'
     'th dd al al'
+    'rg rg rg rg'
     'ld ld mv mv'
     'ang ang ang ang'
     'rot rot rot rot';
@@ -562,7 +563,8 @@ html.editing body {
 }
 .ed-stage {
   flex: 1;
-  min-height: 0;
+  min-height: 50vh; /* la foto conserva al menos la mitad de la pantalla visible (H38) */
+  min-height: 50dvh;
   position: relative;
 }
 .ed-stage canvas {
@@ -579,9 +581,21 @@ html.editing body {
 .ed-panel {
   background: #1d1b1a;
   padding: 8px 10px; /* el margen inferior del iPhone ya lo pone .editor */
-  max-height: 42vh; /* en el iPhone la foto conserva al menos la mitad de la pantalla; el panel se desplaza */
+  /* en el iPhone la foto conserva al menos la mitad de la pantalla (dvh: con las barras de Safari); el panel encoge y
+     se desplaza */
+  max-height: 42vh;
+  max-height: 42dvh;
+  min-height: 88px;
+  flex: 0 1 auto;
   overflow-y: auto;
   overscroll-behavior: contain;
+}
+.ed-aviso {
+  margin: 0 0 6px;
+  color: var(--ink);
+}
+.ed-aviso:empty {
+  display: none;
 }
 .ed-panel > div {
   display: flex;
@@ -629,8 +643,8 @@ html.editing body {
   flex-basis: 100%;
   margin: 0;
 }
-.ed-panel .ed-info:empty {
-  display: none;
+.ed-panel .ed-info {
+  min-height: 2.6em; /* siempre ocupa su sitio: el panel no cambia de alto entre dos toques (H38) */
 }
 .ed-panel button[aria-pressed='true'] {
   background: var(--acc);
@@ -647,6 +661,16 @@ html.editing body {
   background: rgba(51, 48, 43, 0.92);
   border: 1px solid #4a443d;
   color: #f0c36b;
-  font-size: 11px;
+  font-size: 13px;
   pointer-events: none;
+}
+
+/* v13: bordes de arriba y de abajo de cada tatuaje existente y de cada recorte (H34) */
+.tat .t-rango {
+  grid-column: 1 / -1;
+  margin: -2px 0 2px;
+}
+.decal .g-rango {
+  grid-area: rg;
+  margin: 0;
 }

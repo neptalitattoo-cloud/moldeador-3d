@@ -1,7 +1,8 @@
 // Editor «Foto del brazo»: cuentagotas (tono de piel), recortar tatuajes con lazo y borde suave, medir (calibración).
 // Táctil (iPad/iPhone), Apple Pencil y ratón. Dos dedos o la rueda: mover/acercar la foto.
 // El alto que se escribe es el de la TINTA (H9): se marca con dos toques («Marcar el alto») o se detecta sola dentro
-// del lazo. «Desenrollar» (H22) corrige la foto de un brazo curvo: el ancho sale como el arco sobre la piel.
+// del lazo (caja azul, que hay que confirmar: H30). «Desenrollar» (H22) corrige la foto de un brazo curvo: el ancho sale
+// como el arco sobre la piel. «Enderezar» y «Girar 90°» (H29) dejan el brazo vertical, con el hombro arriba.
 import {
   averageColor,
   blurAlpha,
@@ -11,7 +12,9 @@ import {
   rgbOf,
   arcOfCol,
   unrollCols,
-} from './foto.js?v=12';
+  straightenAngle,
+  rotateGeom,
+} from './foto.js?v=13';
 
 const $ = id => document.getElementById(id);
 const MAX_PHOTO = 2048; // px del lado mayor (memoria en iOS)
@@ -21,9 +24,14 @@ const WIDE_CM = 5; // a partir de este ancho se recomienda «Desenrollar» (−6
 const INFO = {
   brazo1: 'Toca el borde izquierdo y el derecho del brazo, a la altura del tatuaje.',
   brazo2: 'Ahora toca el otro borde del brazo.',
-  tinta: 'El alto que escribas se aplica a la tinta, no al hueco del lazo.',
-  sinTinta: 'No se distingue la tinta de la piel: el alto se aplica a todo lo rodeado (o usa «Marcar el alto»).',
+  eje1: 'Toca el brazo cerca del hombro y luego cerca de la mano: la foto se gira para dejarlo vertical.',
+  eje2: 'Ahora toca el brazo cerca de la mano.',
+  tinta: 'Tinta detectada (caja azul): debe tocar los bordes del dibujo, tallos y trazos finos incluidos.',
+  dudoso: '⚠ Tinta detectada con trazos sueltos (¿un pelo?): si la caja azul no cuadra, usa «Marcar el alto».',
+  sinTinta: 'No se distingue la tinta: la caja azul es todo lo rodeado. Si sobra piel, usa «Marcar el alto».',
+  confirmar: 'Para añadirlo, confirma la caja azul o marca el alto.',
   fuera: '⚠ El recorte se sale de los bordes del brazo marcados: vuelve a «Desenrollar».',
+  otraAltura: '⚠ Los bordes del brazo están a otra altura: vuelve a «Desenrollar».',
   ancho: 'Si rodea el brazo, usa «↔ Desenrollar» para que no salga más estrecho que en la piel.',
   brazoOn: 'Desenrollar activo (líneas verdes).',
 };
@@ -36,7 +44,7 @@ export class FotoEditor {
     this.root = $('editor');
     this.cv = $('edCanvas');
     this.tool = 'gotas';
-    this.marking = null; // dentro de «Recortar»: 'alto' (marcar el alto) o 'brazo' (desenrollar)
+    this.marking = null; // 'alto' (marcar el alto) o 'brazo' (desenrollar), dentro de «Recortar»; 'eje' (enderezar)
     this.v = { s: 1, tx: 0, ty: 0 };
     this.lasso = null;
     this.line = null;
@@ -44,7 +52,10 @@ export class FotoEditor {
     this.brazo = null; // [xl, xr]: bordes del brazo a la altura del tatuaje (px de la foto)
     this.brazoY = 0;
     this.brazoPend = null;
+    this.ejePend = null; // primer toque de «Enderezar» (hacia el hombro)
+    this.inkOk = false; // «✓ La caja azul cubre todo el dibujo» (H30); se anula si cambia el lazo o el alto
     this.cmPerPx = null;
+    this.altoCal = null; // alto calibrado exacto (el campo muestra su redondeo a 1 mm) (H35)
     this.probe = null;
     this.sample = null;
     this.tone = null;
@@ -52,7 +63,7 @@ export class FotoEditor {
     this._wire();
   }
   // ---------- abrir / cerrar ----------
-  // img: foto nueva (Image) o this.src (volver al editor con la misma foto, ya reducida: sin decodificar otra vez)
+  // img: foto nueva (Image) o this.src (volver al editor con la misma foto, ya reducida y quizá girada)
   open(img) {
     const same = img === this.src;
     if (!same) {
@@ -64,20 +75,20 @@ export class FotoEditor {
       if (this.src) this.src.width = this.src.height = 0; // libera la foto anterior
       this.src = c;
       // foto nueva: calibración, alto y desenrollar, de cero (con la misma foto se conservan)
-      this.cmPerPx = this.line = null;
+      this._resetCalib();
       this.brazo = this.brazoPend = null;
-      $('edMideCm').value = '';
       $('edAlto').value = '';
-      $('edEscala').textContent = 'Sin calibrar: escribe el alto a mano.';
     }
     const g = this.src.getContext('2d', { willReadFrequently: true });
     this.data = g.getImageData(0, 0, this.src.width, this.src.height).data;
-    this.lasso = this.probe = this.sample = this.altoMark = this._stroke = null;
+    this.lasso = this.probe = this.sample = this.altoMark = this._stroke = this.ejePend = null;
+    this.inkOk = false;
     this.tone = null;
     $('edUsarTono').disabled = true;
     $('edRecortar').disabled = true;
     $('edHex').textContent = 'Toca la piel en una zona con buena luz.';
     $('edSwatch').style.background = 'transparent';
+    this._aviso('Brazo recto y vertical, hombro arriba. Si la foto salió torcida, usa ⟲ Enderezar.');
     this.opener = document.activeElement;
     for (const el of document.querySelectorAll('header, main')) el.inert = true; // el foco no sale del editor
     this.root.hidden = false;
@@ -115,16 +126,27 @@ export class FotoEditor {
     this.cv.dataset.tool = t;
     this.setMarking(null);
   }
-  // «📏 Marcar el alto» / «↔ Desenrollar»: lo que hace el dedo dentro de «Recortar»
+  // «📏 Marcar el alto» / «↔ Desenrollar» (dentro de «Recortar») y «⟲ Enderezar» (con cualquier herramienta)
   setMarking(m) {
+    const was = this.marking;
     this.marking = m;
     if (m !== 'brazo') this.brazoPend = null;
+    if (m !== 'eje') this.ejePend = null;
     if (m !== 'alto' && this.altoMark && this.altoMark.pending) this.altoMark = this._prevMark || null;
     $('edMarcar').setAttribute('aria-pressed', String(m === 'alto'));
     $('edDesenrollar').setAttribute('aria-pressed', String(m === 'brazo'));
+    $('edEnderezar').setAttribute('aria-pressed', String(m === 'eje'));
     $('edBrazoQuitar').hidden = !this.brazo;
-    if (m) this._info(m === 'alto' ? 'Toca arriba y abajo de la tinta (o traza la línea).' : null);
+    if (m === 'eje') this._aviso(INFO.eje1);
+    else if (was === 'eje') this._aviso('');
+    if (m === 'alto') this._info('Toca arriba y abajo de la tinta (o traza la línea).');
+    else if (m === 'brazo') this._info();
     this.draw();
+  }
+  // texto del editor que no depende de la herramienta (enderezar, recorte añadido); se anuncia (aria-live)
+  _aviso(t) {
+    const el = $('edAviso');
+    if (el.textContent !== t) el.textContent = t;
   }
   // ---------- vista ----------
   _size() {
@@ -156,6 +178,15 @@ export class FotoEditor {
   probeRadius() {
     return Math.max(4, 0.01 * Math.min(this.src.width, this.src.height));
   }
+  // caja azul: la tinta detectada o, si no se distingue, todo lo rodeado (px de la foto, bordes continuos)
+  _blueBox() {
+    const L = this.lasso;
+    if (!L || !L.closed) return null;
+    if (L.ink) return { left: L.ink.left, top: L.ink.top, right: L.ink.right + 1, bottom: L.ink.bottom + 1 };
+    const xs = L.pts.map(p => p[0]),
+      ys = L.pts.map(p => p[1]);
+    return { left: Math.min(...xs), top: Math.min(...ys), right: Math.max(...xs), bottom: Math.max(...ys) };
+  }
   draw() {
     if (!this.src || this.root.hidden) return;
     const g = this.cv.getContext('2d'),
@@ -186,19 +217,29 @@ export class FotoEditor {
       g.stroke();
       g.setLineDash([]);
     }
-    // caja de la tinta detectada (a ella se aplica el alto si no se marca a mano)
-    const ink = this.lasso && this.lasso.closed && this.lasso.ink;
-    if (ink) {
-      const [ax, ay] = this.toView(ink.left, ink.top),
-        [bx, by] = this.toView(ink.right + 1, ink.bottom + 1);
-      g.lineWidth = 2;
-      g.setLineDash([5, 3]);
+    // caja azul: la tinta detectada (a ella se aplica el alto si no se marca a mano)
+    const box = this._blueBox();
+    if (box) {
+      const [ax, ay] = this.toView(box.left, box.top),
+        [bx, by] = this.toView(box.right, box.bottom);
+      g.lineWidth = this.inkOk ? 3 : 2;
+      g.setLineDash(this.inkOk ? [] : [5, 3]);
       g.strokeStyle = this.altoMark && !this.altoMark.pending ? 'rgba(56,200,255,.45)' : '#38c8ff';
       g.strokeRect(ax, ay, bx - ax, by - ay);
       g.setLineDash([]);
     }
     if (this.line) this._drawLine(g, this.line[0], this.line[1], false);
     if (this.altoMark) this._drawLine(g, this.altoMark.a, this.altoMark.pending ? null : this.altoMark.b, true);
+    if (this.ejePend) {
+      const [x, y] = this.toView(...this.ejePend);
+      g.fillStyle = '#5bd8ff';
+      g.strokeStyle = '#000';
+      g.lineWidth = 2;
+      g.beginPath();
+      g.arc(x, y, 7, 0, 2 * Math.PI);
+      g.fill();
+      g.stroke();
+    }
     if (this.probe) this._loupe(g);
   }
   // línea amarilla de «Medir» o del alto marcado (con rayas horizontales: lo que cuenta es la altura)
@@ -225,17 +266,19 @@ export class FotoEditor {
       g.stroke();
     }
   }
-  // bordes del brazo para desenrollar (verde)
+  // bordes del brazo para desenrollar (verde), sólo a la altura marcada (H33)
   _drawBrazo(g) {
     const xs = this.brazo ? this.brazo : this.brazoPend ? [this.brazoPend[0]] : [];
     if (!xs.length) return;
+    const yc = this.brazo ? this.brazoY : this.brazoPend[1],
+      ext = this.brazo ? Math.max(20, 0.3 * (this.brazo[1] - this.brazo[0])) : 30;
     g.lineWidth = 2;
     g.strokeStyle = '#5bea7a';
     g.setLineDash([8, 5]);
     for (const x of xs) {
       g.beginPath();
-      g.moveTo(...this.toView(x, 0));
-      g.lineTo(...this.toView(x, this.src.height));
+      g.moveTo(...this.toView(x, yc - ext));
+      g.lineTo(...this.toView(x, yc + ext));
       g.stroke();
     }
     g.setLineDash([]);
@@ -288,6 +331,60 @@ export class FotoEditor {
     g.arc(cx, cy, R + 6.5, 0, 2 * Math.PI);
     g.stroke();
   }
+  // ---------- enderezar / girar (H29) ----------
+  // «⟲ Enderezar»: un toque hacia el hombro y otro hacia la mano
+  _ejeUp(p) {
+    if (!this.ejePend) {
+      this.ejePend = p;
+      this._aviso(INFO.eje2);
+      return;
+    }
+    const q0 = this.ejePend;
+    this.setMarking(null);
+    if (Math.hypot(p[0] - q0[0], p[1] - q0[1]) * this.v.s < 20) {
+      this._aviso('Toca dos puntos separados a lo largo del brazo (hombro y mano).');
+      return;
+    }
+    const a = straightenAngle(q0, p);
+    if (Math.abs(a) < 0.005) this._aviso('La foto ya está recta.');
+    else this._rotate(a, 'Foto enderezada: brazo vertical, hombro arriba. Vuelve a rodear los tatuajes.');
+  }
+  /**
+   * Gira la foto (ya reducida, máx. MAX_PHOTO) el ángulo a (radianes, horario en pantalla). Lo marcado (lazo, línea de
+   * «Medir», alto marcado, bordes de «Desenrollar», calibración) estaba en la foto de antes: se borra.
+   */
+  _rotate(a, msg) {
+    const s = this.src,
+      R = rotateGeom(s.width, s.height, a, MAX_PHOTO),
+      out = document.createElement('canvas');
+    out.width = R.W;
+    out.height = R.H;
+    const g = out.getContext('2d', { willReadFrequently: true });
+    g.imageSmoothingQuality = 'high';
+    g.setTransform(R.k, 0, 0, R.k, R.W / 2, R.H / 2);
+    g.rotate(a);
+    g.drawImage(s, -s.width / 2, -s.height / 2);
+    s.width = s.height = 0; // libera la foto anterior
+    this.src = out;
+    this.data = g.getImageData(0, 0, out.width, out.height).data;
+    const calibrada = !!this.cmPerPx;
+    this.lasso = this.line = this.altoMark = this._prevMark = this._prevLine = this.probe = null;
+    this.brazo = this.brazoPend = this.ejePend = null;
+    this.inkOk = false;
+    this._resetCalib();
+    if (calibrada) $('edAlto').value = ''; // era el alto calculado con la calibración
+    this.setMarking(null);
+    this.fit();
+    this._refreshCut();
+    this._info();
+    this._aviso(msg);
+    this.draw();
+  }
+  _resetCalib() {
+    this.cmPerPx = this.line = this.altoCal = null;
+    $('edMideCm').value = '';
+    $('edEscala').textContent = 'Sin calibrar: escribe el alto a mano.';
+  }
   // ---------- herramientas ----------
   // en vivo sólo la lupa y la muestra de color; el texto (aria-live) se escribe al soltar, para no saturar VoiceOver
   sampleAt(ix, iy) {
@@ -320,13 +417,15 @@ export class FotoEditor {
     L.y0 = Math.min(...ys);
     L.hSrc = Math.max(...ys) - L.y0; // alto del trazo en px de la foto
     L.ink = this._detectInk();
+    this.inkOk = false; // caja nueva: hay que volver a confirmarla
     this._altoFromCalib();
     this._refreshCut();
     this._info();
   }
   /**
    * Caja de la tinta dentro del lazo (px de la foto) o null. El tono de la piel se mide justo por fuera del lazo
-   * (casi siempre es piel, aunque el lazo vaya pegado a la tinta); si no hay, el del cuentagotas o el borde interior.
+   * (casi siempre es piel, aunque el lazo vaya pegado a la tinta), columna a columna (la sombra lateral del brazo);
+   * si no hay, el del cuentagotas o el borde interior.
    */
   _detectInk() {
     const pts = this.lasso.pts,
@@ -376,9 +475,16 @@ export class FotoEditor {
       const o = 4 * (y0 + y) * W;
       rgba.set(this.data.subarray(o + 4 * x0, o + 4 * x1), 4 * y * w);
     }
+    // las esquinas de una foto girada son transparentes: ni piel ni tinta
+    for (let i = 0; i < w * h; i++)
+      if (rgba[4 * i + 3] < 128) {
+        ring[i] = 0;
+        mask[i] = 0;
+      }
     const skin = medianColor(rgba, ring, w, h) || (this.tone && rgbOf(this.tone)) || null;
-    const r = inkRows(rgba, mask, w, h, skin);
-    return r && { top: r.top + y0, bottom: r.bottom + y0, left: r.left + x0, right: r.right + x0 };
+    const r = inkRows(rgba, mask, w, h, skin, ring);
+    if (!r) return null;
+    return { top: r.top + y0, bottom: r.bottom + y0, left: r.left + x0, right: r.right + x0, dudoso: r.dudoso };
   }
   /**
    * Altura (px de la foto) a la que se aplica el alto escrito: la marcada a mano, la de la tinta detectada o, si no se
@@ -392,7 +498,40 @@ export class FotoEditor {
     if (L.ink) return { h: L.ink.bottom - L.ink.top + 1, por: 'tinta' };
     return { h: L.hSrc, por: 'trazo' };
   }
-  // texto de ayuda del panel del lazo (qué alto se usa, avisos de «Desenrollar»)
+  /**
+   * Caja de referencia del recorte (px de la foto, bordes continuos) (H31): arriba y abajo, lo marcado a mano o la caja
+   * azul; izquierda y derecha, la caja azul. El recorte se centra en ella.
+   */
+  refBox() {
+    const box = this._blueBox();
+    if (!box) return null;
+    const r = this.refH();
+    if (r && r.por === 'marca') {
+      const m = this.altoMark;
+      box.top = Math.min(m.a[1], m.b[1]);
+      box.bottom = Math.max(m.a[1], m.b[1]);
+    }
+    return box;
+  }
+  // alto escrito (cm); si es el calibrado y el campo sigue mostrando su redondeo, el valor exacto (H35)
+  _alto() {
+    const v = $('edAlto').value;
+    return this.altoCal && v === fmt(this.altoCal) ? this.altoCal : this.toCm(v);
+  }
+  // ancho de la caja de referencia en cm para un alto dado (arco sobre la piel si se desenrolla)
+  _anchoCm(alto) {
+    const b = this.refBox(),
+      r = this.refH();
+    if (!b || !r || !(alto > 0)) return NaN;
+    const un = this.brazo && { xc: (this.brazo[0] + this.brazo[1]) / 2, R: (this.brazo[1] - this.brazo[0]) / 2 },
+      w = un ? arcOfCol(b.right, un.xc, un.R) - arcOfCol(b.left, un.xc, un.R) : b.right - b.left;
+    return (w * alto) / r.h;
+  }
+  _cajaOk() {
+    const r = this.refH();
+    return !!r && (r.por === 'marca' || this.inkOk);
+  }
+  // texto de ayuda del panel del lazo (qué alto se usa, ancho resultante en cm, avisos de «Desenrollar»)
   _info(msg) {
     const el = $('edTinta');
     if (msg) {
@@ -403,27 +542,38 @@ export class FotoEditor {
       L = this.lasso && this.lasso.closed ? this.lasso : null,
       out = [];
     if (this.marking === 'brazo') out.push(this.brazoPend ? INFO.brazo2 : INFO.brazo1);
-    if (r && r.por === 'marca') out.push(`Alto marcado a mano: ${Math.round(r.h)} px de la foto (líneas amarillas).`);
-    else if (r && r.por === 'tinta') out.push(`Tinta detectada: ${r.h} px de alto (caja azul). ${INFO.tinta}`);
+    if (r && r.por === 'marca') out.push('Alto marcado a mano (líneas amarillas).');
+    else if (r && r.por === 'tinta') out.push(L.ink.dudoso ? INFO.dudoso : INFO.tinta);
     else if (r) out.push(INFO.sinTinta);
-    const alto = this.toCm($('edAlto').value);
+    const alto = this._alto();
     if (L && r && alto > 0) {
-      const x0 = L.ink ? L.ink.left : Math.min(...L.pts.map(p => p[0])),
-        x1 = L.ink ? L.ink.right + 1 : Math.max(...L.pts.map(p => p[0])),
-        ancho = ((x1 - x0) * alto) / r.h;
-      if (this.brazo && (x0 < this.brazo[0] || x1 > this.brazo[1])) out.push(INFO.fuera);
-      else if (this.brazo) out.push(`Desenrollado sobre un brazo de ${Math.round(this.brazo[1] - this.brazo[0])} px.`);
-      else if (ancho >= WIDE_CM) out.push(`Recorte ancho (≈ ${fmt(ancho)} cm). ${INFO.ancho}`);
-    } else if (this.brazo) out.push(INFO.brazoOn);
+      const ancho = this._anchoCm(alto),
+        b = this.refBox();
+      out.push(`Con Alto ${fmt(alto)} cm, el dibujo mide ${fmt1(ancho)} cm de ancho: compruébalo con la regla.`);
+      if (!this._cajaOk()) out.push(INFO.confirmar);
+      if (this.brazo && (this.brazoY < L.y0 || this.brazoY > L.y0 + L.hSrc)) out.push(INFO.otraAltura);
+      else if (this.brazo && (b.left < this.brazo[0] || b.right > this.brazo[1])) out.push(INFO.fuera);
+      else if (this.brazo) out.push('Desenrollado: el ancho es el arco sobre la piel.');
+      else if (ancho >= WIDE_CM) out.push(INFO.ancho);
+    } else if (this.brazo) {
+      out.push(L && (this.brazoY < L.y0 || this.brazoY > L.y0 + L.hSrc) ? INFO.otraAltura : INFO.brazoOn);
+    }
     el.textContent = out.join(' ');
   }
   _refreshCut() {
-    const alto = this.toCm($('edAlto').value);
-    $('edRecortar').disabled = !(this.lasso && this.lasso.closed && alto > 0.5 && alto < 80);
+    const alto = this._alto(),
+      closed = !!(this.lasso && this.lasso.closed),
+      r = this.refH(),
+      b = $('edCajaOk');
+    $('edRecortar').disabled = !(closed && alto > 0.5 && alto < 80 && this._cajaOk());
+    b.hidden = !closed || !r || r.por === 'marca';
+    b.setAttribute('aria-pressed', String(this.inkOk));
   }
   _altoFromCalib() {
     const r = this.refH();
-    if (this.cmPerPx && r) $('edAlto').value = fmt(altoFromCalib(r.h, this.cmPerPx));
+    if (!this.cmPerPx || !r) return;
+    this.altoCal = altoFromCalib(r.h, this.cmPerPx);
+    $('edAlto').value = fmt(this.altoCal);
   }
   _calib() {
     if (!this.line) return;
@@ -431,8 +581,7 @@ export class FotoEditor {
       px = Math.hypot(this.line[1][0] - this.line[0][0], this.line[1][1] - this.line[0][1]);
     if (cm > 0 && px > 5) {
       this.cmPerPx = cm / px;
-      $('edEscala').textContent =
-        `Calibrado: 10 cm = ${Math.round(10 / this.cmPerPx)} px de la foto. El alto de los recortes se calcula solo.`;
+      $('edEscala').textContent = 'Calibrado: el alto de los recortes se calcula solo (compruébalo).';
       this._altoFromCalib();
       this._refreshCut();
     }
@@ -483,28 +632,45 @@ export class FotoEditor {
     if (this._stroke === 'alto') this.altoMark = this._prevMark || null;
     this._stroke = null;
   }
-  /** Recorte del lazo → canvas con transparencia (borde suave); desenrollado si se marcaron los bordes del brazo. */
+  /**
+   * Recorte del lazo → canvas con transparencia (borde suave); desenrollado si se marcaron los bordes del brazo.
+   * H31: el lienzo es simétrico alrededor de la caja de referencia (la tinta o lo marcado), así que su centro es el de
+   * la tinta aunque el lazo no deje el mismo hueco por cada lado; lo que sobra queda transparente.
+   * Devuelve { canvas, traceH (alto de la referencia en px del lienzo), por, inkBox (caja de referencia, px del lienzo) }.
+   */
   cut(feather) {
     const pts = this.lasso.pts,
       W = this.src.width,
-      H = this.src.height;
-    const f = Math.max(0, feather);
-    let x0 = Math.floor(Math.min(...pts.map(p => p[0])) - f),
-      y0 = Math.floor(Math.min(...pts.map(p => p[1])) - f),
-      x1 = Math.ceil(Math.max(...pts.map(p => p[0])) + f),
-      y1 = Math.ceil(Math.max(...pts.map(p => p[1])) + f);
-    x0 = Math.max(0, x0);
-    y0 = Math.max(0, y0);
-    x1 = Math.min(W, x1);
-    y1 = Math.min(H, y1);
-    const bh = y1 - y0,
-      un = this.brazo && { xc: (this.brazo[0] + this.brazo[1]) / 2, R: (this.brazo[1] - this.brazo[0]) / 2 },
-      bw = un ? arcOfCol(x1, un.xc, un.R) - arcOfCol(x0, un.xc, un.R) : x1 - x0,
-      k = Math.min(1, MAX_CUT / Math.max(bw, bh)),
-      cols = un ? unrollCols(x0, x1, un.xc, un.R, k) : null,
+      H = this.src.height,
+      f = Math.max(0, feather);
+    // lo que tiene píxeles: el lazo con el borde suave, dentro de la foto
+    const x0 = Math.max(0, Math.floor(Math.min(...pts.map(p => p[0])) - f)),
+      y0 = Math.max(0, Math.floor(Math.min(...pts.map(p => p[1])) - f)),
+      x1 = Math.min(W, Math.ceil(Math.max(...pts.map(p => p[0])) + f)),
+      y1 = Math.min(H, Math.ceil(Math.max(...pts.map(p => p[1])) + f));
+    const ref = this.refBox(),
+      cx = (ref.left + ref.right) / 2,
+      cy = (ref.top + ref.bottom) / 2,
+      hy = Math.max(cy - y0, y1 - cy, 1),
+      Y0 = cy - hy,
+      un = this.brazo && { xc: (this.brazo[0] + this.brazo[1]) / 2, R: (this.brazo[1] - this.brazo[0]) / 2 };
+    let bw, X0;
+    if (un) {
+      const s0 = arcOfCol(x0, un.xc, un.R),
+        s1 = arcOfCol(x1, un.xc, un.R),
+        sm = arcOfCol(cx, un.xc, un.R);
+      bw = 2 * Math.max(sm - s0, s1 - sm, 1);
+    } else {
+      const hx = Math.max(cx - x0, x1 - cx, 1);
+      X0 = cx - hx;
+      bw = 2 * hx;
+    }
+    const k = Math.min(1, MAX_CUT / Math.max(bw, 2 * hy)),
+      cols = un ? unrollCols(x0, x1, un.xc, un.R, k, cx) : null,
       cw = cols ? cols.w : Math.max(1, Math.round(bw * k)),
-      ch = Math.max(1, Math.round(bh * k)),
-      xOf = cols ? cols.xOf : x => (x - x0) * k;
+      ch = Math.max(1, Math.round(2 * hy * k)),
+      xOf = cols ? cols.xOf : x => (x - X0) * k,
+      yOf = y => (y - Y0) * k;
     const out = document.createElement('canvas');
     out.width = cw;
     out.height = ch;
@@ -513,17 +679,18 @@ export class FotoEditor {
       // H22: cada columna del recorte es un trozo igual de arco sobre la piel (más ancho que en la foto)
       g.imageSmoothingEnabled = true;
       for (let X = 0; X < cw; X++) {
+        if (!Number.isFinite(cols.sx[X])) continue; // fuera de lo recortado: transparente
         const sx = Math.min(W - 1, Math.max(0, cols.sx[X] - 0.5));
-        g.drawImage(this.src, sx, y0, 1, bh, X, 0, 1, ch);
+        g.drawImage(this.src, sx, y0, 1, y1 - y0, X, yOf(y0), 1, (y1 - y0) * k);
       }
-    } else g.drawImage(this.src, x0, y0, bw, bh, 0, 0, cw, ch);
+    } else g.drawImage(this.src, x0, y0, x1 - x0, y1 - y0, xOf(x0), yOf(y0), (x1 - x0) * k, (y1 - y0) * k);
     const m = document.createElement('canvas');
     m.width = cw;
     m.height = ch;
     const mg = m.getContext('2d', { willReadFrequently: true });
     mg.fillStyle = '#000';
     mg.beginPath();
-    pts.forEach(([x, y], i) => mg[i ? 'lineTo' : 'moveTo'](xOf(x), (y - y0) * k));
+    pts.forEach(([x, y], i) => mg[i ? 'lineTo' : 'moveTo'](xOf(x), yOf(y)));
     mg.closePath();
     mg.fill();
     const md = mg.getImageData(0, 0, cw, ch).data,
@@ -536,7 +703,12 @@ export class FotoEditor {
     m.width = m.height = 0;
     // el alto en cm se aplica a la tinta (o a lo marcado), no al lienzo con el hueco del lazo y el borde suave (H9)
     const r = this.refH();
-    return { canvas: out, traceH: (r ? r.h : bh) * k, por: r ? r.por : 'trazo' };
+    return {
+      canvas: out,
+      traceH: (ref.bottom - ref.top) * k,
+      por: r ? r.por : 'trazo',
+      inkBox: { x0: xOf(ref.left), y0: yOf(ref.top), x1: xOf(ref.right), y1: yOf(ref.bottom) },
+    };
   }
   // ---------- eventos ----------
   _wire() {
@@ -586,15 +758,18 @@ export class FotoEditor {
         this.draw();
         return;
       }
-      panning = this.tool === 'mover' || e.button === 1;
+      panning = (this.tool === 'mover' && this.marking !== 'eje') || e.button === 1;
       if (panning) return;
       const [ix, iy] = this.toImg(...xy(e));
-      if (this.tool === 'gotas') this.sampleAt(ix, iy);
+      if (this.marking === 'eje') this._ejeAt = [ix, iy];
+      else if (this.tool === 'gotas') this.sampleAt(ix, iy);
       else if (this.tool === 'lazo' && this.marking === 'alto') this._markDown([ix, iy]);
       else if (this.tool === 'lazo' && this.marking === 'brazo') this._brazoAt = [ix, iy];
       else if (this.tool === 'lazo') {
         this.lasso = { pts: [[ix, iy]], closed: false };
+        this.inkOk = false;
         $('edRecortar').disabled = true;
+        $('edCajaOk').hidden = true;
       } else if (this.tool === 'medir') {
         this._prevLine = this.line; // si se cancela, vuelve la línea (y la calibración) de antes
         this._stroke = 'medir';
@@ -633,7 +808,8 @@ export class FotoEditor {
         return;
       }
       const [ix, iy] = this.toImg(...cur);
-      if (this.tool === 'gotas') this.sampleAt(ix, iy);
+      if (this.marking === 'eje') this._ejeAt = [ix, iy];
+      else if (this.tool === 'gotas') this.sampleAt(ix, iy);
       else if (this.tool === 'lazo' && this.marking === 'alto') {
         if (this.altoMark && !this.altoMark.pending) this.altoMark.b = [ix, iy];
       } else if (this.tool === 'lazo' && this.marking === 'brazo') this._brazoAt = [ix, iy];
@@ -650,20 +826,21 @@ export class FotoEditor {
       last = null;
       if (P.size) return;
       if (!panning) {
-        if (this.tool === 'lazo' && this.marking === 'alto') this._markUp();
+        if (this.marking === 'eje') {
+          if (this._ejeAt) this._ejeUp(this._ejeAt);
+        } else if (this.tool === 'lazo' && this.marking === 'alto') this._markUp();
         else if (this.tool === 'lazo' && this.marking === 'brazo' && this._brazoAt) this._brazoUp(this._brazoAt);
         else if (this.tool === 'lazo') this._lassoDone();
-        if (this.tool === 'medir') {
+        else if (this.tool === 'medir') {
           this._stroke = null;
           this._calib();
           if (this.line && !this.cmPerPx) $('edMideCm').focus();
-        }
-        if (this.tool === 'gotas') {
+        } else if (this.tool === 'gotas') {
           this._toneDone();
           this.probe = null;
         }
       }
-      this._brazoAt = null;
+      this._brazoAt = this._ejeAt = null;
       panning = false;
       this.draw();
     };
@@ -687,8 +864,9 @@ export class FotoEditor {
     new ResizeObserver(() => {
       if (this.root.hidden) return;
       this._size();
-      // el panel cambió de alto (p. ej. el de «Recortar» es más alto); nunca a mitad de un trazo
-      if (!this.userView && !P.size) this.fit();
+      // el panel cambió de alto (p. ej. el de «Recortar» es más alto); nunca a mitad de un trazo, ni entre los dos
+      // toques de «Desenrollar», «Enderezar» o «Marcar», ni con un lazo cerrado (H38)
+      if (!this.userView && !P.size && !this.marking && !(this.lasso && this.lasso.closed)) this.fit();
       this.draw();
     }).observe(cv);
     this.root.querySelectorAll('#edTools button').forEach(b => {
@@ -699,16 +877,27 @@ export class FotoEditor {
       this.fit();
       this.draw();
     };
+    $('edEnderezar').onclick = () => this.setMarking(this.marking === 'eje' ? null : 'eje');
+    $('edGirar').onclick = () => this._rotate(Math.PI / 2, 'Foto girada 90°. Vuelve a rodear los tatuajes.');
     $('edUsarTono').onclick = () => {
       if (this.tone) this.onTone(this.tone);
     };
     $('edAlto').addEventListener('input', () => {
+      this.inkOk = false; // otro alto, otro ancho en cm: hay que volver a confirmar la caja
       this._refreshCut();
       this._info();
+      this.draw();
     });
     $('edMideCm').addEventListener('input', () => this._calib());
     $('edMarcar').onclick = () => this.setMarking(this.marking === 'alto' ? null : 'alto');
     $('edDesenrollar').onclick = () => this.setMarking(this.marking === 'brazo' ? null : 'brazo');
+    $('edCajaOk').onclick = () => {
+      if (!(this.lasso && this.lasso.closed)) return;
+      this.inkOk = !this.inkOk;
+      this._refreshCut();
+      this._info();
+      this.draw();
+    };
     $('edBrazoQuitar').onclick = () => {
       this.brazo = this.brazoPend = null;
       this.setMarking(null);
@@ -717,22 +906,30 @@ export class FotoEditor {
     };
     $('edBorrar').onclick = () => {
       this.lasso = this.altoMark = null;
-      $('edRecortar').disabled = true;
+      this.inkOk = false;
+      this._refreshCut();
       this._info();
       this.draw();
     };
     $('edRecortar').onclick = () => {
-      const alto = this.toCm($('edAlto').value);
-      if (!(this.lasso && this.lasso.closed && alto > 0)) return;
+      const alto = this._alto();
+      if (!(this.lasso && this.lasso.closed && alto > 0 && this._cajaOk())) return;
       const feather = (+$('edBorde').value / 100) * Math.min(this.src.width, this.src.height) * 0.1;
-      const { canvas, traceH } = this.cut(feather);
-      this.onCut({ canvas, traceH, name: $('edNombre').value.trim(), alto });
+      const { canvas, traceH, inkBox } = this.cut(feather);
+      const dc = this.onCut({ canvas, traceH, inkBox, name: $('edNombre').value.trim(), alto });
+      const ancho = ((inkBox.x1 - inkBox.x0) / (inkBox.y1 - inkBox.y0)) * alto;
       this.lasso = this.altoMark = null;
+      this.inkOk = false;
+      this.brazo = this.brazoPend = null; // el desenrollado es de ESTE tatuaje (H33)
       $('edNombre').value = '';
       if (!this.cmPerPx) $('edAlto').value = ''; // el siguiente recorte no hereda el alto de este
-      $('edRecortar').disabled = true;
       this.setMarking(null);
+      this._refreshCut();
       this._info();
+      // H41: se anuncia dentro del editor (el resto de la página está inerte) y el foco no se queda en un botón apagado
+      this._aviso(`Recorte «${(dc && dc.name) || 'tatuaje'}» añadido: ${fmt1(ancho)} × ${fmt1(alto)} cm.`);
+      $('edNombre').focus();
+      this.draw();
     };
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape' && this.isOpen) this.close();
@@ -744,3 +941,4 @@ const fit = (w, h, max) => {
   return [Math.max(1, Math.round(w * k)), Math.max(1, Math.round(h * k))];
 };
 const fmt = x => (Math.round(x * 10) / 10).toString().replace('.', ',');
+const fmt1 = x => x.toFixed(1).replace('.', ','); // siempre con un decimal: «8,0 cm»

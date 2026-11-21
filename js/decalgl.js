@@ -31,6 +31,7 @@ export class DecalGL {
     this.gl = gl;
     this.lost = false;
     this.onrestored = null;
+    this.noStencil = false; // sólo las pruebas (H37, control negativo): el sangrado sin la plantilla de las islas
     // contexto perdido (iOS al pasar a otra app, falta de memoria): esta instancia ya no vale; al recuperarse, app.js
     // crea una nueva (los programas, búferes y texturas del contexto viejo no sobreviven)
     this.canvas.addEventListener('webglcontextlost', e => {
@@ -197,7 +198,7 @@ export class DecalGL {
           qb[2 * i] = v[0];
           qb[2 * i + 1] = v[1];
         });
-        gl.stencilFunc(gl.EQUAL, 0, 0xff); // sólo fuera de las islas
+        gl.stencilFunc(this.noStencil ? gl.ALWAYS : gl.EQUAL, 0, 0xff); // sólo fuera de las islas
         gl.bufferData(gl.ARRAY_BUFFER, qb, gl.STREAM_DRAW);
         gl.vertexAttribPointer(this.aUV, 2, gl.FLOAT, false, 16, 0);
         gl.vertexAttribPointer(this.aTC, 2, gl.FLOAT, false, 16, 8);

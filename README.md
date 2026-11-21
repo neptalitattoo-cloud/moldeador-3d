@@ -4,7 +4,7 @@ Static web tool (Spanish UI) that reshapes a 3D right arm to a client's measurem
 
 - Enter the measurements (cm) → **Moldear** → download **USDZ** (Y up, cm) or **OBJ + MTL + PNG**.
 - Skin base layer is painted only inside the arm/hand UV islands (transparent outside).
-- «Tatuajes existentes» are guide rings only: «Desde hombro (borde de arriba)» is the tattoo's top edge and «Largo (hacia la muñeca)» its length along the arm (this field was labelled «Ancho» before v12; saved data and URLs keep the same meaning), so the two blue rings sit at top and top + length. Photo cut-outs use the tattoo's centre instead (see below).
+- «Tatuajes existentes» are guide rings only: «Borde de arriba» is the tattoo's top edge and «Largo» its length along the arm toward the wrist (labelled «Ancho» before v12 and «Desde hombro» before v13; the number keeps the same meaning), so the two blue rings sit at top and top + length. Photo cut-outs use the tattoo's «Centro» instead (see below); every row and card shows «arriba X · abajo Y cm» and the summary uses the same numbers.
 - Tattoo layer, tattoo-marker guides and measurement guides are exported as separate PNG layers (Procreate imports one base layer per model).
 - **📏 Mostrar guías de medición**: pink rings/lines on the 3D preview showing where each field is measured; focusing a field highlights its guide.
 - **🗺️ Ver en 2D**: flat UV texture view (skin + tattoo layer + guides + UV island outlines) or orthographic silhouettes of the fitted arm (outer/front/inner/back) with numbered measurements in cm and a 10 cm scale bar; pinch/drag zoom and pan; «Descargar PNG 2D» exports the current 2D view in high resolution.
@@ -19,7 +19,7 @@ Static web tool (Spanish UI) that reshapes a 3D right arm to a client's measurem
   of a curved arm: tap the left and right edges of the arm at the tattoo's height and the cut-out is resampled column by
   column so its width is the arc on the skin, not the chord seen by the camera (an 8 cm tattoo on a 25 cm forearm
   otherwise comes out ~16 % narrower); the editor suggests it for wide cut-outs. Each cut-out is placed by
-  «Desde hombro» (cm from the shoulder tip to its centre, along the outer line where lengths are measured), side
+  «Centro» (cm from the shoulder tip to the centre of the ink, along the outer line where lengths are measured), side
   (exterior/delante/interior/detrás or any angle), height in cm and rotation, or by dragging (what you grab stays under
   your finger) / pinching it in the 2D flat view. It is wrapped around the fitted arm with a surface chart measured on the
   fitted mesh (real arc length around each cross-section and real length down the arm, full 360° wrap, down to ~3–4 cm
@@ -33,7 +33,7 @@ Static web tool (Spanish UI) that reshapes a 3D right arm to a client's measurem
   forearm and wrist on all sides including across the UV seam; up to ±5.2 % when rotated 30–90°. v10 tests also check the
   whole shape, not just the axes (upper arm / lower forearm: edges ≤ 1.3 %, diagonals ≤ 4.8 %; next to the elbow: edges
   3.3 %, diagonals 6.9 %; deltoid: edges 3.8 %, diagonals 5.1 % — the skin twists there, so a square becomes slightly
-  rhomboid; front/back of the shoulder cap above the armpit is still 15–20 % off), a full-wrap band on the tapering lower forearm (its straight
+  rhomboid; front/back of the shoulder cap above the armpit is up to ≈ 23 % off), a full-wrap band on the tapering lower forearm (its straight
   edge stays a ring, ±3 mm) and that the grabbed point stays under the finger within 1 mm measured in 3D.
 - Hand: **10. Contorno nudillos** is a tape *around* the hand at the knuckles without the thumb (15–32 cm, the yellow ring
   in the 3D guides); empty → ≈ 1.04 × wrist, kept within 15–32 cm. Warnings if it looks like a width (< 0.9 × wrist) or
@@ -46,6 +46,15 @@ Static web tool (Spanish UI) that reshapes a 3D right arm to a client's measurem
 
 - Photo editor on iPhone: the tool panel scrolls (max 42 % of the screen) and the photo re-fits when the panel changes
   height (never mid-stroke, never after a manual zoom).
+
+## v13 (Opus v12 audit)
+
+- **⟲ Enderezar / ↻ Girar 90°** in the photo editor: two taps along the arm rotate the photo so the arm is vertical, shoulder up (a 10° tilt used to shrink the tattoo ≈ 9 %).
+- Ink box: per-column skin tone, despeckled absolute ink counts (thin stems and letters are kept), width shown in cm, and the blue box must be confirmed (or the height marked) before adding.
+- Cut-outs are centred on the ink, and the blue guide (also exported) fits the ink.
+- Distortion warning on the card when the drawing's edges or diagonals deviate > 5 % on the 3D arm (`decalStretch`).
+- «Desenrollar» resets after each cut-out; Medir keeps full precision; 2D pinch rotates like the fingers; bleed test with a negative control; 3D redraw after WebGL context loss; 4096 px export where possible (2048 on iPhone).
+- `vendor/LICENSES.md`, a `.gitignore` and a CI step that keep photos out of this public repo.
 
 ## Run locally
 ```

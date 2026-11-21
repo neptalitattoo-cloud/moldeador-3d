@@ -1,6 +1,6 @@
 // Vista 2D: (a) textura plana con capas y guías, (b) siluetas ortográficas del brazo ajustado con medidas.
 // Zoom con pellizco / rueda, arrastrar para mover, doble toque para encajar.
-import { dot, cross, norm } from './core.js?v=12';
+import { dot, cross, norm } from './core.js?v=13';
 const PINK = '#ff3d9a',
   PINK_D = '#d81b72',
   HI = '#ffc400',
@@ -104,23 +104,36 @@ export class View2D {
     if (!this.active || this._raf) return;
     this._raf = requestAnimationFrame(() => {
       this._raf = 0;
-      if (!this.active) return;
-      const stale = [...(this.stale || [])];
-      this.stale = null;
-      const keep = this.mode === 'tex' && stale.includes('tex') ? this.cache.tex : null;
-      for (const k of stale) if (k !== 'tex' || !keep) this._free([k]);
-      if (keep) delete this.cache.tex;
-      this.ensure(keep); // la capa de textura se repinta sobre el mismo canvas
-      this.draw();
+      this._redraw();
     });
+  }
+  // lo pendiente, ya (H40: el arrastre pinta la vista 2D en el mismo fotograma, no en el siguiente)
+  flush() {
+    if (!this._raf) return;
+    cancelAnimationFrame(this._raf);
+    this._raf = 0;
+    this._redraw();
+  }
+  _redraw() {
+    if (!this.active) return;
+    const stale = [...(this.stale || [])];
+    this.stale = null;
+    const keep = this.mode === 'tex' && stale.includes('tex') ? this.cache.tex : null;
+    for (const k of stale) if (k !== 'tex' || !keep) this._free([k]);
+    if (keep) delete this.cache.tex;
+    this.ensure(keep); // la capa de textura se repinta sobre el mismo canvas
+    this.draw();
   }
   ensure(reuse = null) {
     const c = this.cache;
     if (this.mode === 'tex') {
       if (!c.tex) c.tex = this.renderTex(this.api.texSize(), reuse);
       else if (reuse && reuse !== c.tex) reuse.width = reuse.height = 0;
+      // aristas de las islas UV: capa fija, no se vuelven a trazar en cada fotograma del arrastre (H40)
+      if (c.texE && (c.texE.width !== c.tex.width || c.texE.height !== c.tex.height)) this._free(['texE']);
+      if (!c.texE) c.texE = this.renderEdges([c.tex.width, c.tex.height]);
       if (!c.texG) c.texG = this.renderTexGuides();
-      this.layers = [c.tex, c.texG];
+      this.layers = [c.tex, c.texE, c.texG];
       this.layerSize = [c.tex.width, c.tex.height];
       this.bg = '#2b2724';
     } else {
@@ -169,6 +182,7 @@ export class View2D {
   }
   _pointers() {
     const P = new Map(),
+      kind = new Map(), // tipo de cada puntero: con el Apple Pencil apoyado, la palma (touch) no cuenta (H39)
       cv = this.cv;
     let last = null;
     const zoomAt = (f, x, y) => {
@@ -191,12 +205,25 @@ export class View2D {
       return [(x - this.v.tx) / this.v.s / W, 1 - (y - this.v.ty) / this.v.s / H];
     };
     cv.addEventListener('pointerdown', e => {
+      // la misma regla que el editor: con el lápiz apoyado, la palma no pellizca ni gira el recorte
+      if (e.pointerType === 'touch' && [...kind.values()].includes('pen')) return;
+      if (e.pointerType === 'pen' && P.size) {
+        // la palma llegó antes que el lápiz: se olvida y el gesto empieza de nuevo con el lápiz
+        for (const [id, t] of [...kind])
+          if (t !== 'pen') {
+            P.delete(id);
+            kind.delete(id);
+          }
+        if (gesture === 'decal' && this.editHook) this.editHook.end();
+        gesture = null;
+      }
       try {
         cv.setPointerCapture(e.pointerId);
       } catch {
         // puntero ya suelto o sintético: se sigue sin captura
       }
       P.set(e.pointerId, xy(e));
+      kind.set(e.pointerId, e.pointerType);
       last = null;
       if (P.size === 1) {
         const editing = this.editHook && this.editHook.active();
@@ -260,7 +287,9 @@ export class View2D {
       moved = 0;
     });
     const up = e => {
+      if (!P.has(e.pointerId)) return; // palma ignorada
       P.delete(e.pointerId);
+      kind.delete(e.pointerId);
       last = null;
       if (!P.size) {
         if (gesture === 'decal' && this.editHook) this.editHook.end();
@@ -340,18 +369,28 @@ export class View2D {
     mer.unshift([m.s_tip, VT[2 * tt], VT[2 * tt + 1]]);
     return (this.uvT = { v2t, edges, mer });
   }
-  renderTex(size = this.api.texSize(), reuse = null) {
+  // piel + tatuaje; con edges, también las aristas de las islas (exportación); en pantalla van en su capa fija
+  renderTex(size = this.api.texSize(), reuse = null, edges = false) {
     const { api } = this,
       [W, H] = size,
       c = reuse && reuse.width === Math.round(W) && reuse.height === Math.round(H) ? reuse : mk(W, H),
-      g = c.getContext('2d'),
-      VT = api.base.VT;
+      g = c.getContext('2d');
     if (reuse && c !== reuse) reuse.width = reuse.height = 0;
     g.clearRect(0, 0, W, H);
     g.drawImage(api.baseLayer(), 0, 0, W, H);
     const t = api.tattooLayer();
     if (t) g.drawImage(t, 0, 0, W, H);
-    const { edges } = this._uvTables();
+    if (edges) this._edges(g, W, H);
+    return c;
+  }
+  renderEdges([W, H]) {
+    const c = mk(W, H);
+    this._edges(c.getContext('2d'), W, H);
+    return c;
+  }
+  _edges(g, W, H) {
+    const VT = this.api.base.VT,
+      { edges } = this._uvTables();
     g.strokeStyle = 'rgba(255,255,255,0.55)';
     g.lineWidth = Math.max(1.5, W / 900);
     g.beginPath();
@@ -360,7 +399,6 @@ export class View2D {
       g.lineTo(VT[2 * b] * W, (1 - VT[2 * b + 1]) * H);
     }
     g.stroke();
-    return c;
   }
   renderTexGuides(size = this.api.texSize(), target = null) {
     // target: dibuja directamente sobre ese canvas (exportación sin canvas intermedio)
@@ -768,7 +806,7 @@ export class View2D {
     };
     if (this.mode === 'tex') {
       const S = this.api.exportSize(),
-        t = this.renderTex(S);
+        t = this.renderTex(S, null, true);
       this.renderTexGuides(S, t);
       return t;
     }

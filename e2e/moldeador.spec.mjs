@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { sitio, lista, moldear, vigilarErrores, leerZip, tamPNG } from './sitio.mjs';
-import { fotoPNG } from './fixture.mjs';
+import { fotoPNG, girar, cilindroPNG, CIL, FOTO } from './fixture.mjs';
 
 let S;
 test.beforeAll(async () => {
@@ -269,9 +269,16 @@ function elipse(cx, cy, rx, ry, n = 48) {
 }
 // lazo HOLGADO como el de un dedo (H9): deja 25 px de piel arriba y abajo y corta las esquinas de la tinta
 const LAZO_HOLGADO = elipse(300, 375, 125, 150);
-async function abrirFoto(page, query) {
+// lazo DESCENTRADO (H31): 30 px más arriba que la tinta (95 px de piel arriba y 35 abajo)
+const LAZO_ALTO = elipse(300, 345, 135, 190);
+// imagen generada (nunca fotos reales) en un archivo temporal
+function archivoFoto(buf = fotoPNG()) {
   const foto = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'foto-')), 'brazo.png');
-  fs.writeFileSync(foto, fotoPNG()); // imagen generada: nunca fotos reales
+  fs.writeFileSync(foto, buf);
+  return foto;
+}
+async function abrirFoto(page, query, buf = fotoPNG()) {
+  const foto = archivoFoto(buf);
   await page.goto(S.url + query);
   await lista(page);
   await page.click('#ejemplo');
@@ -280,6 +287,7 @@ async function abrirFoto(page, query) {
   await page.setInputFiles('#fotoGal', foto);
   await expect(page.locator('#editor')).toBeVisible();
 }
+const lum = p => 0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2];
 // arrastre con el ratón por puntos de la foto (px de la imagen)
 async function trazar(page, pts) {
   // el lienzo se vuelve a encajar cuando el panel cambia de alto (otra herramienta): se espera a que se asiente
@@ -290,10 +298,11 @@ async function trazar(page, pts) {
   for (const q of cl.slice(1)) await page.mouse.move(...q);
   await page.mouse.up();
 }
-// lazo holgado + «Alto 10» SIN «Medir» (+ «Marcar el alto» si se pide) → recorte colocado a 38 cm, por fuera
-async function recortar(page, { marcar = false } = {}) {
+// lazo (por defecto el holgado) + «Alto» SIN «Medir» (+ «Marcar el alto» si se pide; si no, se confirma la caja
+// azul: H30) → recorte colocado con el centro a d cm, por fuera
+async function recortar(page, { marcar = false, lazo = LAZO_HOLGADO, alto = 10, d = 38 } = {}) {
   await page.click('#edTools button[data-t="lazo"]');
-  await trazar(page, LAZO_HOLGADO);
+  await trazar(page, lazo);
   if (marcar) {
     await page.click('#edMarcar');
     await trazar(page, [
@@ -304,15 +313,28 @@ async function recortar(page, { marcar = false } = {}) {
     expect(r.por).toBe('marca');
     expect(Math.abs(r.h - 250)).toBeLessThan(2);
     await expect(page.locator('#edTinta')).toContainText('Alto marcado');
+    await expect(page.locator('#edCajaOk')).toBeHidden(); // con el alto marcado no hace falta confirmar la caja
   }
-  await page.fill('#edAlto', '10'); // alto de la TINTA ⇒ ancho = 200/250 × 10 = 8 cm
+  await page.fill('#edAlto', String(alto)); // alto de la TINTA ⇒ ancho = 200/250 × 10 = 8 cm
+  if (!marcar) {
+    // H30: sin el alto marcado a mano, «Añadir recorte» espera a que se confirme la caja azul
+    await expect(page.locator('#edRecortar')).toBeDisabled();
+    await expect(page.locator('#edTinta')).toContainText('compruébalo con la regla');
+    await page.click('#edCajaOk');
+    await expect(page.locator('#edCajaOk')).toHaveAttribute('aria-pressed', 'true');
+  }
+  await expect(page.locator('#edRecortar')).toBeEnabled();
   await page.click('#edRecortar');
   await expect(page.locator('#edAlto')).toHaveValue(''); // sin calibrar, el alto no se arrastra al siguiente recorte
+  // H41: se anuncia dentro del editor y el foco pasa al nombre del siguiente (no se queda en un botón apagado)
+  await expect(page.locator('#edAviso')).toContainText('añadido');
+  expect(await page.evaluate(() => document.activeElement.id)).toBe('edNombre');
+  expect(await page.evaluate(() => window.__editor.brazo)).toBeNull(); // H33: el desenrollado era de este recorte
   await page.click('#edListo');
   await expect(page.locator('#editor')).toBeHidden();
   await expect(page.locator('#decals .decal')).toHaveCount(1);
   await page.evaluate(() => (window.__antes = window.__result));
-  await page.fill('#decals .dd', '38');
+  await page.fill('#decals .dd', String(d));
   await page.locator('#decals .dd').press('Enter');
   await page.waitForTimeout(600);
   expect(await page.evaluate(() => window.__result === window.__antes)).toBe(true); // Intro no vuelve a moldear
@@ -362,9 +384,21 @@ test('foto: cuentagotas → tono, lazo holgado, colocar a X cm y mover en 2D', a
   ])
     expect(Math.abs(v - t)).toBeLessThanOrEqual(2);
   await expect(page.locator('#edTinta')).toContainText('Tinta detectada');
+  expect(ink.dudoso).toBe(false);
+  await expect(page.locator('#edCajaOk')).toBeVisible();
+  // H30: el ancho resultante en cm, para comprobarlo con la regla (200 × 250 px de tinta, «Alto 10» ⇒ 8,0 cm)
+  await page.fill('#edAlto', '10');
+  await expect(page.locator('#edTinta')).toContainText(/el dibujo mide (7,9|8,0|8,1) cm de ancho/);
   await page.click('#edBorrar');
+  await page.fill('#edAlto', '');
   // 3) recorte con «Alto 10» sin «Medir», colocado el centro a 38 cm del hombro, por fuera
   await recortar(page);
+  // H34: la línea «arriba · abajo» del recorte (centro 38, alto 10) y la del resumen bajo la tabla coinciden
+  const rango = page.locator('#decals .g-rango');
+  await expect(rango).toHaveText('arriba 33,0 · abajo 43,0 cm');
+  await expect(page.locator('#resumenGuias')).toContainText(`tatuaje 1: ${await rango.textContent()} (alto 10)`);
+  await expect(page.locator('#tatuajes .t-rango').nth(2)).toHaveText('arriba 39,0 · abajo 45,0 cm'); // «Bandas»
+  await expect(page.locator('#resumenGuias')).toContainText('Bandas: arriba 39,0 · abajo 45,0 cm (largo 6)');
   await expect(page.locator('#decals .mover')).toHaveAttribute('aria-label', /^Mover /);
   expect(await page.evaluate(() => document.getElementById('updWarn').hidden)).toBe(false); // H28
   await expect(page.locator('#avisoRecortes')).toBeHidden(); // sólo en iOS (donde beforeunload no avisa)
@@ -386,6 +420,17 @@ test('foto: cuentagotas → tono, lazo holgado, colocar a X cm y mover en 2D', a
   const guia = await page.evaluate(() => window.__guiaRecorte(0));
   expect(guia.tramos).toBeGreaterThan(40);
   expect(guia.azul).toBeGreaterThan(0);
+  // H42: con recortes, las capas se exportan a 4096 px donde cabe (Chromium sí; si no, 2048), todas del mismo tamaño
+  const [dlc] = await Promise.all([page.waitForEvent('download'), page.click('#dlCapas')]);
+  const zc = leerZip(fs.readFileSync(await dlc.path())),
+    tTat = tamPNG(zc['capas/brazo_Ejemplo_tatuaje.png']),
+    tGuias = tamPNG(zc['capas/brazo_Ejemplo_guias.png']);
+  console.log(`e2e exportación: tatuaje ${tTat.join('×')} px, guías ${tGuias.join('×')} px`);
+  expect(tTat).toEqual(tGuias);
+  expect([2048, 4096]).toContain(tTat[0]);
+  if (browserName === 'chromium') expect(tTat[0]).toBe(4096);
+  // la vista previa sigue a 2048 (el recorte se sigue viendo en su sitio)
+  expect((await page.evaluate(() => window.__tatPixel(...window.__cmToUV(38, 0))))[3]).toBeGreaterThan(200);
   // 4) mover en 2D: lo agarrado sigue al dedo (dirección y cantidad)
   await page.click('#decals .mover');
   await expect(page.locator('#btn2D')).toHaveAttribute('aria-pressed', 'true');
@@ -453,10 +498,10 @@ test('foto: cuentagotas → tono, lazo holgado, colocar a X cm y mover en 2D', a
       `el centro se movió ${pin.centro.toFixed(1)} px`,
   );
   expect(pin.escala).toBeGreaterThan(1.3);
-  expect(Math.abs(Math.abs(pin.giro) - 15)).toBeLessThan(1); // sobre la piel gira lo mismo que los dedos
-  // en la vista plana, del mismo lado; el ángulo exacto cambia algo porque la UV no conserva ángulos (10–25°)
-  expect(pin.pantalla).toBeGreaterThan(10);
-  expect(pin.pantalla).toBeLessThan(25);
+  // H36: en la vista plana el dibujo gira lo mismo que los dedos y hacia el mismo lado (antes, 19,9° por 15°); sobre la
+  // piel el giro es el que hace falta para eso (la UV no conserva los ángulos)
+  expect(Math.abs(pin.pantalla - 15)).toBeLessThan(2);
+  expect(Math.abs(pin.giro)).toBeGreaterThan(5);
   expect(pin.centro).toBeLessThan(6); // el punto medio de los dedos no se movió: el recorte tampoco (H28)
   // 5) tono sólo para esta sesión (el siguiente cliente empieza con piel neutra)
   expect(await page.evaluate(() => sessionStorage.getItem('moldeador.tono'))).toBe(tono);
@@ -477,7 +522,10 @@ test('respaldo 2D (?nogl) y alto marcado a mano: mismas medidas de la tinta y ma
   expect(errs).toEqual([]);
 });
 
-test('sangrado WebGL de 20 px: nada en triángulos ajenos, sí fuera de las islas', async ({ page, browserName }) => {
+test('sangrado WebGL de 20 y 160 px: nada en triángulos ajenos (con control sin plantilla), sí fuera de las islas', async ({
+  page,
+  browserName,
+}) => {
   await abrirFoto(page, '?debug');
   const gl2 = await hayWebGL2(page);
   test.skip(!gl2 && browserName !== 'chromium', 'este navegador no da WebGL2');
@@ -487,14 +535,220 @@ test('sangrado WebGL de 20 px: nada en triángulos ajenos, sí fuera de las isla
   expect(cost.bordes).toBeGreaterThan(10);
   await page.evaluate(() => window.__sangrado(20));
   expect(await page.evaluate(() => window.__pintor())).toBe('webgl2');
+  const s20 = await page.evaluate(() => window.__sangradoInfo(0, 300));
+  expect(s20.pintados).toBe(0);
+  expect(s20.sangrado).toBeGreaterThanOrEqual(5);
+  // H37: con 20 px la isla ajena más cercana queda fuera de alcance (≈ 6 sangrados) y la prueba pasaría aunque la
+  // plantilla no funcionara: se repite con 160 px, que SÍ llega a otras islas (lo demuestra el control sin plantilla)
+  await page.evaluate(() => window.__sangrado(160));
   const s = await page.evaluate(() => window.__sangradoInfo(0, 300));
   console.log(
-    `e2e sangrado (${cost.ang}°, ${s.bordes} aristas de borde): ${s.pintados}/${s.n} triángulos ajenos pintados ` +
-      `(${s.cerca} a menos de 40 px, ${s.otrasIslas} de otras islas); sangrado fuera de las islas en ${s.sangrado}`,
+    `e2e sangrado 160 px (${cost.ang}°, ${s.bordes} aristas de borde): ${s.pintados}/${s.n} triángulos ajenos pintados ` +
+      `(${s.cerca} a menos de dos sangrados, ${s.otrasIslas} de otras islas); sangrado fuera de las islas en ${s.sangrado}`,
   );
   expect(s.n).toBeGreaterThanOrEqual(200);
+  // H37: la prueba no puede pasar vacía: aristas de borde donde se comprueba que sí hay sangrado, y el control negativo
+  // de abajo (sin la plantilla, los mismos triángulos ajenos SÍ se pintan) demuestra que están a su alcance
   expect(s.pintados).toBe(0);
-  expect(s.sangrado).toBeGreaterThan(0);
+  expect(s.sangrado).toBeGreaterThanOrEqual(5);
+  // control negativo: sin la plantilla de las islas y con los mismos 160 px SÍ se pisan triángulos ajenos, así que
+  // la prueba de arriba puede fallar si la máscara vuelve a romperse
+  await page.evaluate(() => {
+    window.__sinPlantilla(true);
+    window.__sangrado(160);
+  });
+  const ctl = await page.evaluate(() => window.__sangradoInfo(0, 300));
+  console.log(
+    `e2e sangrado sin plantilla (control): ${ctl.pintados}/${ctl.n} triángulos ajenos pintados; el más cercano a ${ctl.dmin.toFixed(1)} sangrados`,
+  );
+  expect(ctl.pintados).toBeGreaterThan(0);
+  await page.evaluate(() => {
+    window.__sinPlantilla(false);
+    window.__sangrado(6);
+  });
+});
+
+test('foto girada 10° (H29): «⟲ Enderezar» con dos toques → la tinta mide 8 × 10 cm', async ({ page }) => {
+  const errs = vigilarErrores(page);
+  await abrirFoto(page, '?debug', fotoPNG({ giro: 10 }));
+  // dos toques a lo largo del brazo (el eje x = 300 de la escena derecha): primero hacia el hombro, luego hacia la mano
+  await page.click('#edEnderezar');
+  await expect(page.locator('#edAviso')).toContainText('cerca del hombro');
+  await trazar(page, [girar(300, 120, 10)]);
+  await expect(page.locator('#edAviso')).toContainText('cerca de la mano');
+  await trazar(page, [girar(300, 680, 10)]);
+  await expect(page.locator('#edAviso')).toContainText('Foto enderezada');
+  await expect(page.locator('#edEnderezar')).toHaveAttribute('aria-pressed', 'false');
+  // la foto girada (más grande, con las esquinas transparentes) lleva la escena derecha en su centro
+  const g = await page.evaluate(() => ({ w: window.__editor.src.width, h: window.__editor.src.height }));
+  const dx = g.w / 2 - FOTO.w / 2,
+    dy = g.h / 2 - FOTO.h / 2,
+    mover = pts => pts.map(([x, y]) => [x + dx, y + dy]);
+  expect(g.w).toBeGreaterThan(FOTO.w);
+  // la caja de la tinta vuelve a ser la de la escena derecha (±3 px)
+  await page.click('#edTools button[data-t="lazo"]');
+  await trazar(page, mover(LAZO_HOLGADO));
+  const ink = await page.evaluate(() => window.__editor.lasso.ink);
+  console.log(`e2e enderezar: foto ${g.w}×${g.h}, tinta ${JSON.stringify(ink)} (desplazamiento ${dx}, ${dy})`);
+  for (const [v, t] of [
+    [ink.top, 250 + dy],
+    [ink.bottom, 499 + dy],
+    [ink.left, 200 + dx],
+    [ink.right, 399 + dx],
+  ])
+    expect(Math.abs(v - t)).toBeLessThanOrEqual(3);
+  await page.click('#edBorrar');
+  // lazo holgado + «Alto 10» sin «Medir» → lo pintado mide 8 × 10 cm (sin enderezar saldría ≈ 9,4 % más pequeño)
+  await recortar(page, { lazo: mover(LAZO_HOLGADO) });
+  await comprobarMedidas(page, 'foto girada 10° y enderezada');
+  // «Volver al editor» abre la foto ya enderezada (no un lienzo liberado)
+  await page.click('#fotoEditar');
+  await expect(page.locator('#editor')).toBeVisible();
+  expect(await page.evaluate(() => [window.__editor.src.width, window.__editor.src.height])).toEqual([g.w, g.h]);
+  await page.click('#edGirar');
+  expect(await page.evaluate(() => [window.__editor.src.width, window.__editor.src.height])).toEqual([g.h, g.w]);
+  expect(errs).toEqual([]);
+});
+
+test('lazo descentrado 30 px hacia arriba (H31): centrado en la tinta, mismas medidas', async ({ page }) => {
+  const errs = vigilarErrores(page);
+  await abrirFoto(page, '?debug');
+  await recortar(page, { lazo: LAZO_ALTO });
+  const r = await page.evaluate(() => {
+    const dc = window.__decals()[0];
+    return { b: dc.inkBox, w: dc.canvas.width, h: dc.canvas.height, tinta: window.__tintaCm(0) };
+  });
+  console.log(`e2e lazo descentrado: lienzo ${r.w}×${r.h}, tinta ${JSON.stringify(r.b)}`);
+  // la tinta en el centro del lienzo (±2 px) y sus bordes a ±5 cm del centro (alto 10)
+  expect(Math.abs((r.b.y0 + r.b.y1) / 2 - r.h / 2)).toBeLessThanOrEqual(2);
+  expect(Math.abs((r.b.x0 + r.b.x1) / 2 - r.w / 2)).toBeLessThanOrEqual(2);
+  expect(Math.abs(r.tinta.y0 + 5)).toBeLessThan(0.1);
+  expect(Math.abs(r.tinta.y1 - 5)).toBeLessThan(0.1);
+  await comprobarMedidas(page, 'lazo descentrado');
+  // lo pintado: tinta justo dentro de su borde de arriba (y = −4,8 cm) y piel justo fuera (−5,3 cm), en 5 columnas
+  // (sin centrar en la tinta, el borde caería 1,2 cm más abajo)
+  const px = await page.evaluate(() =>
+    [-3.5, -2.5, -1.5, -0.5, 0.5].map(x => [window.__recortePixel(0, x, -4.8), window.__recortePixel(0, x, -5.3)]),
+  );
+  expect(px.filter(([dentro]) => lum(dentro) < 100).length).toBeGreaterThanOrEqual(4);
+  expect(px.filter(([, fuera]) => fuera[3] < 128 || lum(fuera) > 100).length).toBeGreaterThanOrEqual(4);
+  expect(errs).toEqual([]);
+});
+
+test('ejemplo del LEEME (H31): existente borde 36 + largo 15 y recorte alto 15 con centro 43,5 → anillos en el borde de la tinta', async ({
+  page,
+}) => {
+  const errs = vigilarErrores(page);
+  await abrirFoto(page, '?debug');
+  await recortar(page, { alto: 15, d: 43.5 });
+  // el mismo tatuaje apuntado en «Tatuajes existentes»: anillos azules a 36 y a 51 cm
+  await page.click('#addTat');
+  const fila = page.locator('#tatuajes .tat').last();
+  await fila.locator('.tn').fill('mismo');
+  await fila.locator('.td').fill('36');
+  await fila.locator('.tw').fill('15');
+  await expect(fila.locator('.t-rango')).toHaveText('arriba 36,0 · abajo 51,0 cm');
+  await expect(page.locator('#decals .g-rango')).toHaveText('arriba 36,0 · abajo 51,0 cm');
+  const res = {};
+  for (const [lado, ang] of [
+    ['exterior', 0],
+    ['delante', 90],
+    ['interior', 180],
+  ]) {
+    await page.selectOption('#decals .dl', lado);
+    res[ang] = await page.evaluate(() => {
+      // bordes de la tinta PINTADA en la columna x = −2,5 cm del recorte (fuera del círculo claro): primer y último
+      // tramo de al menos 0,3 cm seguidos de tinta (un poro suelto no cuenta)
+      const x = -2.5,
+        paso = 0.02,
+        lum = p => 0.299 * p[0] + 0.587 * p[1] + 0.114 * p[2],
+        oscuro = y => {
+          const p = window.__recortePixel(0, x, y);
+          return !!p && p[3] > 128 && lum(p) < 100;
+        };
+      const tramos = [];
+      let ini = null;
+      for (let y = -9; y <= 9; y += paso) {
+        if (oscuro(y)) ini ??= y;
+        else if (ini != null) {
+          if (y - ini >= 0.3) tramos.push([ini, y - paso]);
+          ini = null;
+        }
+      }
+      const arriba = tramos[0][0],
+        abajo = tramos[tramos.length - 1][1];
+      return {
+        arriba,
+        abajo,
+        d36: window.__distAnillo(0, 36, x, arriba),
+        d51: window.__distAnillo(0, 51, x, abajo),
+      };
+    });
+  }
+  console.log(
+    'e2e ejemplo del LEEME (distancia anillo ↔ borde de la tinta, mm): ' +
+      Object.entries(res)
+        .map(([a, v]) => `${a}°: arriba ${(10 * v.d36).toFixed(1)}, abajo ${(10 * v.d51).toFixed(1)}`)
+        .join(' · '),
+  );
+  // por la cara externa (donde se miden las distancias) el anillo pasa a menos de 5 mm del borde de la tinta;
+  // delante e interior se registran en el log (no se exigen: la carta y la cinta sólo coinciden exactamente a 0°)
+  expect(Math.abs(res[0].arriba + 7.5)).toBeLessThan(0.15);
+  expect(Math.abs(res[0].abajo - 7.5)).toBeLessThan(0.15);
+  // los anillos siguen las rodajas de la malla y el recorte la carta: junto al codo (36 cm, codo a 32) se separan
+  // ≈ 4 mm, más abajo < 1 mm (límite documentado en el LEEME)
+  expect(res[0].d36).toBeLessThan(0.5);
+  expect(res[0].d51).toBeLessThan(0.5);
+  expect(errs).toEqual([]);
+});
+
+test('«↔ Desenrollar» en el editor (H33): brazo cilíndrico → 8 cm de ancho ±3 %; el siguiente recorte, sin desenrollar', async ({
+  page,
+}) => {
+  const errs = vigilarErrores(page);
+  await abrirFoto(page, '?debug', cilindroPNG());
+  const { xc, yc, R } = CIL;
+  await page.click('#edTools button[data-t="lazo"]');
+  await page.click('#edDesenrollar');
+  await trazar(page, [[xc - R + 1, yc]]); // borde izquierdo del brazo, a la altura del tatuaje
+  await trazar(page, [[xc + R - 1, yc]]); // y el derecho
+  const brazo = await page.evaluate(() => window.__editor.brazo);
+  expect(brazo).not.toBeNull();
+  expect(Math.abs(brazo[0] - (xc - R + 1))).toBeLessThan(2);
+  expect(Math.abs(brazo[1] - (xc + R - 1))).toBeLessThan(2);
+  await expect(page.locator('#edBrazoQuitar')).toBeVisible();
+  // lazo holgado alrededor del tatuaje (8 cm de arco = ±88,8 px de cuerda; 10 cm = ±125 px)
+  await recortar(page, { lazo: elipse(xc, yc, 100, 150) });
+  const med = await page.evaluate(() => window.__medirRecorte(0, { tinta: true, x: 0, y: 0 }));
+  console.log(
+    `e2e desenrollar: tinta ${med.ancho.toFixed(2)} × ${med.alto.toFixed(2)} cm (8 × 10; sin desenrollar ≈ 7,1)`,
+  );
+  expect(Math.abs(med.ancho - 8) / 8).toBeLessThan(0.03);
+  expect(Math.abs(med.alto - 10)).toBeLessThan(0.3);
+  // el siguiente recorte de la misma foto empieza sin desenrollar (el radio era el de ESTE tatuaje)
+  await page.click('#fotoEditar');
+  await expect(page.locator('#editor')).toBeVisible();
+  await page.click('#edTools button[data-t="lazo"]');
+  expect(await page.evaluate(() => window.__editor.brazo)).toBeNull();
+  await expect(page.locator('#edBrazoQuitar')).toBeHidden();
+  await expect(page.locator('#edDesenrollar')).toHaveAttribute('aria-pressed', 'false');
+  expect(errs).toEqual([]);
+});
+
+test('contexto WebGL perdido y recuperado (H39): los recortes y el visor 3D se vuelven a pintar', async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== 'chromium', 'WEBGL_lose_context sólo se prueba en Chromium');
+  await abrirFoto(page, '?debug');
+  await recortar(page);
+  expect(await page.evaluate(() => window.__pintor())).toBe('webgl2');
+  expect(await page.evaluate(() => window.__perderContexto())).toBe(true);
+  // se creó un contexto nuevo (no se pasó al dibujo 2D) y el recorte sigue pintado en su centro
+  expect(await page.evaluate(() => window.__pintor())).toBe('webgl2');
+  expect((await page.evaluate(() => window.__tatPixel(...window.__cmToUV(38, 0))))[3]).toBeGreaterThan(200);
+  // el visor 3D se repinta solo al recuperar su contexto (sin tocarlo)
+  expect(await page.evaluate(() => window.__perderContexto3D())).toBeGreaterThan(0);
 });
 
 test('foto JPEG con EXIF «girada 90°» (Orientation = 6): el editor la ve derecha', async ({ page }) => {
@@ -570,5 +824,21 @@ test.describe('iPhone', () => {
       return [dos.defaultPrevented, uno.defaultPrevented];
     });
     expect(cancelado).toEqual([true, false]);
+  });
+  test('editor (H38): con el panel de «Recortar» abierto la foto ocupa al menos la mitad del alto visible', async ({
+    page,
+  }) => {
+    await page.goto(S.url + '?debug');
+    await lista(page);
+    await page.setInputFiles('#fotoGal', archivoFoto());
+    await expect(page.locator('#editor')).toBeVisible();
+    await page.click('#edTools button[data-t="lazo"]');
+    await page.fill('#edAlto', '10');
+    const r = await page.evaluate(() => ({
+      foto: document.getElementById('edCanvas').getBoundingClientRect().height,
+      visible: window.visualViewport ? window.visualViewport.height : innerHeight,
+    }));
+    console.log(`e2e iPhone: foto ${r.foto.toFixed(0)} px de ${r.visible.toFixed(0)} px visibles`);
+    expect(r.foto).toBeGreaterThanOrEqual(0.5 * r.visible - 1);
   });
 });

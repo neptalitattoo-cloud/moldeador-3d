@@ -5,3 +5,14 @@ __pycache__/
 *.pyc
 .venv/
 usdz-prueba/
+# Nunca fotos en el repositorio público (sólo los iconos de la app)
+*.jpg
+*.jpeg
+*.JPG
+*.JPEG
+*.heic
+*.HEIC
+*.heif
+*.webp
+*.png
+!icons/*.png

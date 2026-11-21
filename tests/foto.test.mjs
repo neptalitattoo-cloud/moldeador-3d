@@ -227,6 +227,19 @@ test('cm reales: la FORMA del 8 × 10 sin girar, no sólo los ejes: bordes y dia
   );
 });
 
+test('aviso de deformación (H32): sale en el deltoides a ±90° (d = 10) y no en el brazo a 0° (d = 22)', () => {
+  const s = (d, ang) => FO.decalStretch(trisDe({ d, ang, rot: 0 }), fit.P, W, H);
+  for (const ang of [90, -90]) assert.ok(s(10, ang) > 0.05, `d=10 ${ang}°: ${(100 * s(10, ang)).toFixed(1)} %`);
+  assert.ok(s(22, 0) < 0.05, `d=22 0°: ${(100 * s(22, 0)).toFixed(1)} %`);
+  // la medida es la de los bordes y las diagonales del dibujo, la misma que la prueba de forma
+  const t = trisDe({ d: 22, ang: 0, rot: 0 }),
+    diag = FO.measureOnMesh(t, fit.P, -W / 2, -H / 2, W / 2, H / 2, 600) / Math.hypot(W, H) - 1;
+  assert.ok(s(22, 0) + 1e-3 >= Math.abs(diag), 'incluye la diagonal');
+});
+test.todo(
+  'forma sin cizalla (para el 10): diagonales ≤ 3 % en brazo y antebrazo y ≤ 5 % junto al codo y en el deltoides',
+);
+
 test('cm reales: girado 30° y 90°, ancho y alto a ±6 %', () => {
   for (const d of [22, 38, 50])
     for (const ang of [0, 90, 180])
@@ -320,6 +333,162 @@ test('alto de la tinta (H9): inkRows separa la tinta del hueco de piel que deja 
   assert.ok(Number.isNaN(FO.cutScale(0, 10)));
 });
 
+// ---------- H30: caja de la tinta con dibujos realistas (no un bloque macizo) y lazo HOLGADO ----------
+// piel(x) → [r, g, b] (con ruido y poros), tinta(x, y) → ¿tinta?, pelo(x, y) → ¿pelo oscuro?
+const escena = (w, h, tinta, { piel = () => [200, 152, 122], pelo = () => false } = {}) => {
+  let seed = 11;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  return img(w, h, (x, y) => {
+    if (tinta(x, y)) return [25, 25, 25, 255];
+    if (pelo(x, y)) return [55, 38, 28, 255];
+    if (rnd() < 0.03) return [60, 40, 30, 255]; // poro
+    const p = piel(x);
+    return [p[0] + (rnd() - 0.5) * 12, p[1] + (rnd() - 0.5) * 12, p[2] + (rnd() - 0.5) * 12, 255];
+  });
+};
+// máscara rectangular del lazo [x0, y0, x1, y1] y anillo de 6 px por fuera (como en el editor)
+const lazoRect = (w, h, [x0, y0, x1, y1], R = 6) => {
+  const alpha = new Uint8ClampedArray(w * h),
+    ring = new Uint8ClampedArray(w * h);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      if (x >= x0 && x <= x1 && y >= y0 && y <= y1) alpha[y * w + x] = 255;
+      else if (x >= x0 - R && x <= x1 + R && y >= y0 - R && y <= y1 + R) ring[y * w + x] = 255;
+    }
+  return { alpha, ring };
+};
+// filas de tinta reales de la escena
+const filasReales = (w, h, tinta) => {
+  let a = h,
+    b = -1;
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++)
+      if (tinta(x, y)) {
+        a = Math.min(a, y);
+        b = Math.max(b, y);
+      }
+  return [a, b];
+};
+const caja = (x, y, x0, y0, x1, y1) => x >= x0 && x <= x1 && y >= y0 && y <= y1;
+const detectar = (w, h, tinta, lazo, op = {}) => {
+  const rgba = escena(w, h, tinta, op),
+    { alpha, ring } = lazoRect(w, h, lazo),
+    skin = FO.medianColor(rgba, ring, w, h);
+  return { r: FO.inkRows(rgba, alpha, w, h, skin, op.global ? null : ring), real: filasReales(w, h, tinta) };
+};
+const errAlto = ({ r, real }) => (r ? (r.bottom - r.top + 1) / (real[1] - real[0] + 1) - 1 : Infinity);
+
+test('caja de la tinta (H30): flor con tallo fino y letras con astas, con el lazo holgado: alto a ±3 %', () => {
+  const w = 200,
+    h = 280;
+  // flor (disco de 32 px) con un tallo de 4 px que baja 130 px
+  const flor = (x, y) => (x - 100) ** 2 + (y - 70) ** 2 < 32 ** 2 || caja(x, y, 98, 100, 101, 230);
+  // «l b d»: astas de 4 px desde y = 80 y panzas de la altura de la x (140–200)
+  const letras = (x, y) =>
+    caja(x, y, 30, 80, 33, 200) ||
+    caja(x, y, 60, 80, 63, 200) ||
+    caja(x, y, 60, 140, 95, 143) ||
+    caja(x, y, 60, 197, 95, 200) ||
+    caja(x, y, 92, 140, 95, 200) ||
+    caja(x, y, 140, 80, 143, 200) ||
+    caja(x, y, 110, 140, 143, 143) ||
+    caja(x, y, 110, 197, 143, 200) ||
+    caja(x, y, 110, 140, 113, 200);
+  for (const [nombre, tinta, lazo] of [
+    ['flor con tallo', flor, [30, 15, 170, 262]],
+    ['letras con astas', letras, [10, 40, 190, 240]],
+  ]) {
+    const res = detectar(w, h, tinta, lazo),
+      e = errAlto(res);
+    console.log(`# tinta ${nombre}: alto ${(100 * e).toFixed(1)} %`);
+    assert.ok(Math.abs(e) <= 0.03, `${nombre}: alto ${(100 * e).toFixed(1)} % (${JSON.stringify(res.r)})`);
+    assert.equal(res.r.dudoso, false, nombre);
+  }
+});
+
+test('caja de la tinta (H30): sombra lateral del brazo (degradado izquierda → derecha): tono por columna, alto a ±3 %', () => {
+  const w = 200,
+    h = 280,
+    tinta = (x, y) => caja(x, y, 40, 90, 160, 190),
+    // la piel se oscurece hacia la izquierda (del 100 % al 55 %)
+    piel = x => [200, 152, 122].map(v => v * (0.55 + (0.45 * x) / (w - 1))),
+    lazo = [20, 50, 180, 230];
+  const res = detectar(w, h, tinta, lazo, { piel }),
+    e = errAlto(res);
+  assert.ok(Math.abs(e) <= 0.03, `alto ${(100 * e).toFixed(1)} % (${JSON.stringify(res.r)})`);
+  assert.equal(res.r.dudoso, false);
+  // control: con un solo tono para todo el lazo la sombra cuenta como tinta (la prueba puede fallar)
+  const glob = errAlto(detectar(w, h, tinta, lazo, { piel, global: true }));
+  console.log(`# tinta con sombra: por columna ${(100 * e).toFixed(1)} %, tono único ${(100 * glob).toFixed(1)} %`);
+  assert.ok(glob > 0.1, `con un solo tono debería fallar (${(100 * glob).toFixed(1)} %)`);
+});
+
+test('caja de la tinta (H30): un pelo en el hueco del lazo: alto a ±3 % o la caja se marca como dudosa', () => {
+  const w = 200,
+    h = 280,
+    tinta = (x, y) => caja(x, y, 50, 100, 150, 200),
+    pelo = (x, y) => (y === 60 || y === 61) && x >= 20 && x <= 180,
+    res = detectar(w, h, tinta, [30, 40, 170, 250], { pelo }),
+    e = errAlto(res);
+  console.log(`# tinta con un pelo: ${(100 * e).toFixed(1)} %, dudosa: ${res.r && res.r.dudoso}`);
+  assert.ok(res.r, 'no detecta la tinta');
+  assert.ok(Math.abs(e) <= 0.03 || res.r.dudoso, `alto ${(100 * e).toFixed(1)} % sin marcarla como dudosa`);
+  // sin el pelo, la misma tinta no es dudosa
+  assert.equal(detectar(w, h, tinta, [30, 40, 170, 250]).r.dudoso, false);
+});
+
+test('tono de la piel por columna (H30): mediana del anillo en x ± 8 px; sin muestras, −1', () => {
+  const w = 40,
+    h = 10,
+    rgba = img(w, h, x => [x < 20 ? 100 : 200, 50, 50, 255]),
+    ring = new Uint8ClampedArray(w * h);
+  for (let x = 0; x < 30; x++) ring[x] = ring[w + x] = 255; // dos filas de anillo en las columnas 0–29
+  const t = FO.colTones(rgba, ring, w, h);
+  assert.deepEqual([t[3 * 2], t[3 * 2 + 1]], [100, 50]);
+  assert.equal(t[3 * 27], 200);
+  assert.equal(t[3 * 39], -1); // columnas 31–39 sin anillo en x ± 8
+});
+
+// ---------- H29: enderezar la foto ----------
+test('enderezar (H29): el eje marcado queda vertical con el hombro arriba, y la foto girada cabe entera', () => {
+  assert.equal(FO.straightenAngle([10, 10], [10, 90]), 0); // ya vertical
+  assert.ok(Math.abs(Math.abs(FO.straightenAngle([10, 90], [10, 10])) - Math.PI) < 1e-12); // al revés: media vuelta
+  for (const [w, h, phi] of [
+    [600, 800, 10],
+    [800, 600, -25],
+    [1000, 1500, 170],
+    [4000, 3000, 37],
+    [640, 480, 90], // brazo en horizontal (hombro a la izquierda)
+  ]) {
+    const f = (phi * Math.PI) / 180,
+      u = [Math.sin(f), Math.cos(f)], // del hombro hacia la mano
+      c = [w / 2 + 13, h / 2 - 7],
+      p = [c[0] - 200 * u[0], c[1] - 200 * u[1]],
+      q = [c[0] + 200 * u[0], c[1] + 200 * u[1]],
+      a = FO.straightenAngle(p, q),
+      R = FO.rotateGeom(w, h, a, 2048),
+      [P, Q] = [R.map(...p), R.map(...q)];
+    assert.ok(Math.abs(P[0] - Q[0]) < 1e-6, `${phi}°: el eje no queda vertical`);
+    assert.ok(Q[1] > P[1], `${phi}°: la mano quedó arriba`);
+    assert.ok(Math.abs(Q[1] - P[1] - 400 * R.k) < 1e-6, `${phi}°: el eje cambió de largo`);
+    assert.ok(Math.max(R.W, R.H) <= 2048);
+    for (const [x, y] of [
+      [0, 0],
+      [w, 0],
+      [0, h],
+      [w, h],
+    ]) {
+      const [X, Y] = R.map(x, y);
+      assert.ok(X > -1 && X < R.W + 1 && Y > -1 && Y < R.H + 1, `${phi}°: la esquina (${x}, ${y}) queda fuera`);
+    }
+  }
+  // «Girar 90°» (horario): la esquina de arriba a la izquierda pasa a la de arriba a la derecha
+  const G = FO.rotateGeom(600, 800, Math.PI / 2);
+  assert.deepEqual([G.W, G.H], [800, 600]);
+  const [x0, y0] = G.map(0, 0);
+  assert.ok(Math.abs(x0 - 800) < 1e-9 && Math.abs(y0) < 1e-9);
+});
+
 // punto 3D (malla ajustada) bajo una UV, con las baricéntricas del triángulo UV: no usa la carta
 const punto3DdeUV = (tris, x, y) => {
   const h = FO.decalPointUV(tris, x, y);
@@ -351,7 +520,7 @@ test('el alcance del recorte: llega al dorso de la mano y no pasa de ahí', () =
   assert.ok(chart.dMin < 5, `dMin ${chart.dMin}`); // el hombro (encima de la axila) no tiene contorno cerrado
 });
 
-test('pellizco: el recorte gira hacia el mismo lado que los dedos en la vista 2D (giros 0, 90 y 180)', () => {
+test('pellizco (H36): en la vista 2D el dibujo gira lo mismo que los dedos (±1°) en d = 22, 30, 38 y 50', () => {
   // ángulo en pantalla (x = u, y = 1 − v, hacia abajo) del eje x del recorte
   const angImg = tris => {
     const h = FO.decalPointUV(tris, 0, 0),
@@ -361,16 +530,27 @@ test('pellizco: el recorte gira hacia el mismo lado que los dedos en la vista 2D
       );
     return (Math.atan2(A[1], A[0]) * 180) / Math.PI;
   };
-  for (const ang of [0, 90, 180, -90])
-    for (const rot of [0, 90, 180]) {
-      const dec = { d: 30, ang, rot },
-        t0 = FO.decalTriangles(base, FO.decalCoords(chart, dec), W, H);
-      const rot2 = FO.pinchRot(t0, rot, 15);
-      const t1 = FO.decalTriangles(base, FO.decalCoords(chart, { ...dec, rot: rot2 }), W, H);
-      let dd = angImg(t1) - angImg(t0);
-      dd -= 360 * Math.round(dd / 360);
-      assert.ok(Math.abs(dd - 15) < 4, `${ang}° giro ${rot}: el dibujo giró ${dd.toFixed(1)}° (dedos 15°)`);
-    }
+  let peor = 0,
+    piel = 0;
+  for (const d of [22, 30, 38, 50])
+    for (const ang of [0, 90, 180, -90])
+      for (const rot of [0, 90, 180])
+        for (const dedos of [15, -15]) {
+          const dec = { d, ang, rot },
+            t0 = trisDe(dec),
+            rot2 = FO.pinchRot(t0, rot, dedos),
+            t1 = trisDe({ ...dec, rot: rot2 });
+          let dd = angImg(t1) - angImg(t0),
+            dp = rot2 - rot;
+          dd -= 360 * Math.round(dd / 360);
+          dp -= 360 * Math.round(dp / 360);
+          peor = Math.max(peor, Math.abs(dd - dedos));
+          piel = Math.max(piel, Math.abs(Math.abs(dp) - 15));
+          assert.ok(Math.abs(dd - dedos) < 1, `d=${d} ${ang}° giro ${rot}: ${dd.toFixed(1)}° (dedos ${dedos}°)`);
+        }
+  console.log(
+    `# pellizco: peor error en pantalla ${peor.toFixed(2)}°; sobre la piel se aparta hasta ${piel.toFixed(1)}°`,
+  );
 });
 
 // ---------- H25: corrección del estrechamiento (cono) en la costura y al agarrar ----------

@@ -42,6 +42,11 @@ jobs:
              && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then REF="$BEFORE"; fi
           echo "Comparando con $REF"
           python3 herramientas/version_sw.py --check-git "$REF"
+      - name: Ninguna foto en el repositorio público (sólo los iconos de la app)
+        run: |
+          if git ls-files | grep -iE '\.(png|jpe?g|heic|heif|webp|gif|tiff?|bmp)$' | grep -v '^icons/'; then
+            echo 'Hay imágenes fuera de icons/: el repositorio es público, no se suben fotos.'; exit 1
+          fi
       - name: El hash de la CSP coincide con el importmap
         run: python3 herramientas/check_csp.py
       - run: node --test tests/fit.test.mjs tests/foto.test.mjs
