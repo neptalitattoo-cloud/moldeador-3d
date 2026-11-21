@@ -43,6 +43,9 @@ Static web tool (Spanish UI) that reshapes a 3D right arm to a client's measurem
 - Inputs are validated (`K.validateInputs`, Spanish messages); any NaN/Infinity is rejected before export; USD prim names are sanitised (`brazo_Ana-María` → `/brazo_Ana_Maria`).
 - On iPhone/iPad, downloads open the share sheet (Procreate, Files) via a second tap; elsewhere they download directly. Exports are disabled when measurements change after fitting.
 
+- Photo editor on iPhone: the tool panel scrolls (max 42 % of the screen) and the photo re-fits when the panel changes
+  height (never mid-stroke, never after a manual zoom).
+
 ## Run locally
 ```
 python3 -m http.server 8000

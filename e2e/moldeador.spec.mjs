@@ -282,6 +282,8 @@ async function abrirFoto(page, query) {
 }
 // arrastre con el ratón por puntos de la foto (px de la imagen)
 async function trazar(page, pts) {
+  // el lienzo se vuelve a encajar cuando el panel cambia de alto (otra herramienta): se espera a que se asiente
+  await page.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
   const cl = await page.evaluate(ps => ps.map(([x, y]) => window.__editor.imgToClient(x, y)), pts);
   await page.mouse.move(...cl[0]);
   await page.mouse.down();

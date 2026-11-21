@@ -11,7 +11,7 @@ import {
   rgbOf,
   arcOfCol,
   unrollCols,
-} from './foto.js?v=10';
+} from './foto.js?v=11';
 
 const $ = id => document.getElementById(id);
 const MAX_PHOTO = 2048; // px del lado mayor (memoria en iOS)
@@ -138,6 +138,7 @@ export class FotoEditor {
   fit() {
     if (!this.src) return;
     const s = Math.min(this.cw / this.src.width, this.ch / this.src.height) * 0.95;
+    this.userView = false; // encajada: si cambia el tamaño del lienzo (panel de otra herramienta) se vuelve a encajar
     this.v = { s, tx: (this.cw - this.src.width * s) / 2, ty: (this.ch - this.src.height * s) / 2 };
   }
   toImg(x, y) {
@@ -549,6 +550,7 @@ export class FotoEditor {
       return [e.clientX - r.left, e.clientY - r.top];
     };
     const zoomAt = (f, x, y) => {
+      this.userView = true;
       const s2 = Math.min(40, Math.max(0.05, this.v.s * f));
       f = s2 / this.v.s;
       this.v.tx = x - (x - this.v.tx) * f;
@@ -613,6 +615,7 @@ export class FotoEditor {
           dist = Math.hypot(a[0] - b[0], a[1] - b[1]),
           mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
         if (last) {
+          this.userView = true;
           this.v.tx += mid[0] - last.mid[0];
           this.v.ty += mid[1] - last.mid[1];
           zoomAt(dist / last.dist, mid[0], mid[1]);
@@ -623,6 +626,7 @@ export class FotoEditor {
       }
       if (P.size !== 1) return;
       if (panning) {
+        this.userView = true;
         this.v.tx += cur[0] - prev[0];
         this.v.ty += cur[1] - prev[1];
         this.draw();
@@ -683,6 +687,8 @@ export class FotoEditor {
     new ResizeObserver(() => {
       if (this.root.hidden) return;
       this._size();
+      // el panel cambió de alto (p. ej. el de «Recortar» es más alto); nunca a mitad de un trazo
+      if (!this.userView && !P.size) this.fit();
       this.draw();
     }).observe(cv);
     this.root.querySelectorAll('#edTools button').forEach(b => {

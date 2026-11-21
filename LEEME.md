@@ -71,3 +71,6 @@ Arrastra para mover, pellizca o usa la rueda para hacer zoom y toca dos veces pa
 - **«Desde hombro» exacto también en el hombro**: la distancia se ajusta a la cinta de las medidas rodaja a rodaja (antes, a 8 cm del hombro se desviaba 3 mm).
 - **Límites que quedan**: junto al codo y en el deltoides la piel se tuerce y un cuadrado sale ligeramente romboide (diagonales hasta ≈ 7 %); delante y detrás del hombro, por encima de la axila, el error sube al 15–20 %. En brazos cortos o muñecas muy gruesas los recortes llegan justo hasta la muñeca, no más allá.
 - **Gestos y detalles (H28)**: el pellizco mueve el recorte con el punto medio de los dedos; si tras el pellizco el dedo que queda no está sobre un recorte, mueve la vista; con el Apple Pencil se ignora la palma; una línea de «Medir» cancelada no estropea la calibración anterior; en iOS (donde no hay aviso al recargar) se ve «Los recortes no se guardan al recargar» mientras haya recortes; el aviso de versión nueva se actualiza al añadir o quitar recortes; el cuentagotas sólo anuncia el color al soltar.
+
+## v11 (arreglo tras la revisión)
+- **iPhone**: el panel de «Recortar» (más alto desde la v10) ya no tapa la foto: el panel se desplaza y deja al menos la mitad de la pantalla a la foto, y la foto se vuelve a encajar cuando cambia el panel (nunca a mitad de un trazo, y no si tú has hecho zoom).

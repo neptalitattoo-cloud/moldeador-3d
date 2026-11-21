@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/OrbitControls.js';
-import { zipSync } from '../vendor/fflate.js?v=10';
-import * as K from './core.js?v=10';
-import { PARTS } from './parts.js?v=10';
-import { View2D } from './view2d.js?v=10';
-import { FotoEditor } from './editor.js?v=10';
-import * as FO from './foto.js?v=10';
-import { DecalGL } from './decalgl.js?v=10';
+import { zipSync } from '../vendor/fflate.js?v=11';
+import * as K from './core.js?v=11';
+import { PARTS } from './parts.js?v=11';
+import { View2D } from './view2d.js?v=11';
+import { FotoEditor } from './editor.js?v=11';
+import * as FO from './foto.js?v=11';
+import { DecalGL } from './decalgl.js?v=11';
 
 // ---------- entorno y utilidades ----------
 const $ = id => document.getElementById(id);
@@ -1197,7 +1197,7 @@ let workerInit = null;
 function startWorker(meta, buf) {
   workerInit = [meta, buf];
   try {
-    worker = new Worker(new URL('./fit-worker.js?v=10', import.meta.url), { type: 'module' });
+    worker = new Worker(new URL('./fit-worker.js?v=11', import.meta.url), { type: 'module' });
   } catch {
     worker = null;
     return;
