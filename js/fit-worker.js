@@ -1,5 +1,5 @@
 // Ejecuta K.fit fuera del hilo principal (core.js no usa el DOM).
-import * as K from './core.js?v=9';
+import * as K from './core.js?v=10';
 let base = null;
 self.onmessage = ({ data: msg }) => {
   if (msg.type === 'init') {

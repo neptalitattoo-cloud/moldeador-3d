@@ -256,65 +256,116 @@ test('descargas OBJ, capas y PNG 2D con contenido correcto', async ({ page }) =>
   expect(errs).toEqual([]);
 });
 
-test('foto del brazo: cuentagotas → tono, recorte con lazo, colocar a X cm y mover en 2D', async ({ page }) => {
-  const errs = vigilarErrores(page);
+// ---------- foto del brazo ----------
+// La imagen de prueba (e2e/fixture.mjs) es generada: tinta en el rectángulo 200–400 × 250–500 px (200 × 250 px),
+// con un círculo claro en el centro y una marca roja arriba a la derecha. Escala con «Alto 10»: 0,04 cm/px.
+function elipse(cx, cy, rx, ry, n = 48) {
+  const pts = [];
+  for (let k = 0; k <= n; k++) {
+    const t = (2 * Math.PI * k) / n;
+    pts.push([cx + rx * Math.cos(t), cy + ry * Math.sin(t)]);
+  }
+  return pts;
+}
+// lazo HOLGADO como el de un dedo (H9): deja 25 px de piel arriba y abajo y corta las esquinas de la tinta
+const LAZO_HOLGADO = elipse(300, 375, 125, 150);
+async function abrirFoto(page, query) {
   const foto = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'foto-')), 'brazo.png');
   fs.writeFileSync(foto, fotoPNG()); // imagen generada: nunca fotos reales
-  await page.goto(S.url + '?debug');
+  await page.goto(S.url + query);
   await lista(page);
   await page.click('#ejemplo');
   await page.fill('#c_nudillos', '21'); // contorno de nudillos (antes «ancho»: 21 se rechazaba)
   await moldear(page);
   await page.setInputFiles('#fotoGal', foto);
   await expect(page.locator('#editor')).toBeVisible();
-  const en = (x, y) => page.evaluate(([x, y]) => window.__editor.imgToClient(x, y), [x, y]);
-  // 1) cuentagotas sobre la piel (con poros oscuros que debe ignorar)
-  let [cx, cy] = await en(80, 100);
-  await page.mouse.move(cx, cy);
+}
+// arrastre con el ratón por puntos de la foto (px de la imagen)
+async function trazar(page, pts) {
+  const cl = await page.evaluate(ps => ps.map(([x, y]) => window.__editor.imgToClient(x, y)), pts);
+  await page.mouse.move(...cl[0]);
   await page.mouse.down();
+  for (const q of cl.slice(1)) await page.mouse.move(...q);
   await page.mouse.up();
-  await expect(page.locator('#edHex')).toContainText(/#[0-9a-f]{6}/);
-  await page.click('#edUsarTono');
-  const tono = await page.inputValue('#tono');
-  const rgb = [1, 3, 5].map(k => parseInt(tono.slice(k, k + 2), 16));
-  [200, 152, 122].forEach((v, k) => expect(Math.abs(rgb[k] - v)).toBeLessThan(6));
-  // 2) lazo exactamente por el borde del tatuaje (rectángulo 200–400 × 250–500 de la imagen: 200 × 250 px)
+}
+// lazo holgado + «Alto 10» SIN «Medir» (+ «Marcar el alto» si se pide) → recorte colocado a 38 cm, por fuera
+async function recortar(page, { marcar = false } = {}) {
   await page.click('#edTools button[data-t="lazo"]');
-  const pts = [];
-  const esquinas = [
-    [200, 250],
-    [400, 250],
-    [400, 500],
-    [200, 500],
-    [200, 250],
-  ];
-  for (let c = 0; c < 4; c++)
-    for (let k = 0; k < 8; k++) {
-      const [x0, y0] = esquinas[c],
-        [x1, y1] = esquinas[c + 1];
-      pts.push([x0 + ((x1 - x0) * k) / 8, y0 + ((y1 - y0) * k) / 8]);
-    }
-  pts.push(esquinas[0]);
-  [cx, cy] = await en(...pts[0]);
-  await page.mouse.move(cx, cy);
-  await page.mouse.down();
-  for (const q of pts.slice(1)) {
-    [cx, cy] = await en(...q);
-    await page.mouse.move(cx, cy);
+  await trazar(page, LAZO_HOLGADO);
+  if (marcar) {
+    await page.click('#edMarcar');
+    await trazar(page, [
+      [300, 250],
+      [300, 500],
+    ]); // de arriba abajo de la tinta
+    const r = await page.evaluate(() => window.__editor.refH());
+    expect(r.por).toBe('marca');
+    expect(Math.abs(r.h - 250)).toBeLessThan(2);
+    await expect(page.locator('#edTinta')).toContainText('Alto marcado');
   }
-  await page.mouse.up();
-  await page.fill('#edAlto', '10'); // alto de lo rodeado ⇒ ancho = 200/250 × 10 = 8 cm
+  await page.fill('#edAlto', '10'); // alto de la TINTA ⇒ ancho = 200/250 × 10 = 8 cm
   await page.click('#edRecortar');
   await expect(page.locator('#edAlto')).toHaveValue(''); // sin calibrar, el alto no se arrastra al siguiente recorte
   await page.click('#edListo');
   await expect(page.locator('#editor')).toBeHidden();
   await expect(page.locator('#decals .decal')).toHaveCount(1);
-  // 3) colocar el centro a 38 cm del hombro, por fuera
   await page.evaluate(() => (window.__antes = window.__result));
   await page.fill('#decals .dd', '38');
   await page.locator('#decals .dd').press('Enter');
   await page.waitForTimeout(600);
   expect(await page.evaluate(() => window.__result === window.__antes)).toBe(true); // Intro no vuelve a moldear
+}
+// lo pintado de la TINTA (oscuro) mide 8 × 10 cm en la malla ajustada (±0,3 cm), aunque el lazo rodee más piel;
+// se mide fuera del círculo claro y de la marca roja: alto en x = −2,5 cm, ancho en y = +3 cm
+async function comprobarMedidas(page, que) {
+  const med = await page.evaluate(() => ({
+    tinta: window.__medirRecorte(0, { tinta: true, x: -2.5, y: 3 }),
+    alfa: window.__medirRecorte(0, { y: 3 }), // con la piel que rodeó el lazo (alto por el centro: 300 px)
+  }));
+  console.log(
+    `e2e ${que}: tinta ${med.tinta.ancho.toFixed(2)} × ${med.tinta.alto.toFixed(2)} cm (8 × 10); ` +
+      `con la piel del lazo ${med.alfa.ancho.toFixed(2)} × ${med.alfa.alto.toFixed(2)} cm`,
+  );
+  expect(Math.abs(med.tinta.ancho - 8)).toBeLessThan(0.3);
+  expect(Math.abs(med.tinta.alto - 10)).toBeLessThan(0.3);
+  expect(med.alfa.alto).toBeGreaterThan(med.tinta.alto + 1); // el lazo holgado sí pinta piel (≈ 12 cm por el centro)
+  // sin espejo: la marca roja está arriba a la DERECHA del dibujo (x +2,3 cm, y −3,1 cm), y a la izquierda no
+  const roja = await page.evaluate(() => [window.__recortePixel(0, 2.3, -3.1), window.__recortePixel(0, -2.3, -3.1)]);
+  expect(roja[0][0]).toBeGreaterThan(170);
+  expect(roja[0][1]).toBeLessThan(110);
+  expect(roja[1][0]).toBeLessThan(110);
+}
+const hayWebGL2 = page => page.evaluate(() => !!document.createElement('canvas').getContext('webgl2'));
+
+test('foto: cuentagotas → tono, lazo holgado, colocar a X cm y mover en 2D', async ({ page, browserName }) => {
+  const errs = vigilarErrores(page);
+  await abrirFoto(page, '?debug');
+  // 1) cuentagotas sobre la piel (con poros oscuros que debe ignorar)
+  await trazar(page, [[80, 100]]);
+  await expect(page.locator('#edHex')).toContainText(/#[0-9a-f]{6}/);
+  await page.click('#edUsarTono');
+  const tono = await page.inputValue('#tono');
+  const rgb = [1, 3, 5].map(k => parseInt(tono.slice(k, k + 2), 16));
+  [200, 152, 122].forEach((v, k) => expect(Math.abs(rgb[k] - v)).toBeLessThan(6));
+  // 2) lazo holgado: la tinta se detecta sola dentro (caja azul) y a ella se aplica el alto (H9)
+  await page.click('#edTools button[data-t="lazo"]');
+  await trazar(page, LAZO_HOLGADO);
+  const ink = await page.evaluate(() => window.__editor.lasso.ink);
+  expect(ink).not.toBeNull();
+  for (const [v, t] of [
+    [ink.top, 250],
+    [ink.bottom, 499],
+    [ink.left, 200],
+    [ink.right, 399],
+  ])
+    expect(Math.abs(v - t)).toBeLessThanOrEqual(2);
+  await expect(page.locator('#edTinta')).toContainText('Tinta detectada');
+  await page.click('#edBorrar');
+  // 3) recorte con «Alto 10» sin «Medir», colocado el centro a 38 cm del hombro, por fuera
+  await recortar(page);
+  await expect(page.locator('#decals .mover')).toHaveAttribute('aria-label', /^Mover /);
+  expect(await page.evaluate(() => document.getElementById('updWarn').hidden)).toBe(false); // H28
+  await expect(page.locator('#avisoRecortes')).toBeHidden(); // sólo en iOS (donde beforeunload no avisa)
   const px = await page.evaluate(() => ({
     centro: window.__tatPixel(...window.__cmToUV(38, 0)),
     lejos: window.__tatPixel(...window.__cmToUV(20, 0)),
@@ -323,16 +374,12 @@ test('foto del brazo: cuentagotas → tono, recorte con lazo, colocar a X cm y m
   expect(px.centro[3]).toBeGreaterThan(200);
   expect(px.lejos[3]).toBe(0);
   expect(px.otroLado[3]).toBe(0);
-  // cm reales: lo pintado mide 8 × 10 cm sobre la malla ajustada (±3 %)
-  const med = await page.evaluate(() => window.__medirRecorte(0));
-  console.log(`e2e cm reales: ancho ${med.ancho.toFixed(2)} cm (8), alto ${med.alto.toFixed(2)} cm (10)`);
-  expect(Math.abs(med.ancho - 8)).toBeLessThan(0.24);
-  expect(Math.abs(med.alto - 10)).toBeLessThan(0.3);
-  // sin espejo: la marca roja está arriba a la DERECHA del dibujo (x +2,3 cm, y −3,1 cm), y a la izquierda no
-  const roja = await page.evaluate(() => [window.__recortePixel(0, 2.3, -3.1), window.__recortePixel(0, -2.3, -3.1)]);
-  expect(roja[0][0]).toBeGreaterThan(170);
-  expect(roja[0][1]).toBeLessThan(110);
-  expect(roja[1][0]).toBeLessThan(110);
+  // pintado con WebGL2 (Chromium lo tiene siempre en CI; WebKit, si lo da)
+  const gl2 = await hayWebGL2(page);
+  if (browserName === 'chromium') expect(gl2).toBe(true);
+  expect(await page.evaluate(() => window.__pintor())).toBe(gl2 ? 'webgl2' : '2d');
+  // cm reales de la tinta y marca roja
+  await comprobarMedidas(page, gl2 ? 'webgl2' : '2d');
   // la guía azul del recorte existe en la capa de guías
   const guia = await page.evaluate(() => window.__guiaRecorte(0));
   expect(guia.tramos).toBeGreaterThan(40);
@@ -365,7 +412,8 @@ test('foto del brazo: cuentagotas → tono, recorte con lazo, colocar a X cm y m
   const despues = await page.evaluate(() => ({ ...window.__decals()[0], tx: window.__v2d.v.tx }));
   expect([despues.d, despues.ang]).toEqual([antes.d, antes.ang]);
   expect(despues.tx - antes.tx).toBeCloseTo(40, 0);
-  // pellizco con dos dedos (táctil) sobre el recorte: separarlos agranda, girarlos gira hacia el mismo lado
+  // pellizco con dos dedos (táctil) sobre el recorte: separarlos agranda, girarlos gira el dibujo en pantalla lo mismo
+  // y hacia el mismo lado (ángulo en pantalla del eje x del recorte, como angImg en las pruebas unitarias)
   const pin = await page.evaluate(async () => {
     const cv = document.querySelector('canvas.v2d'),
       [x, y] = window.__recorteEnPantalla(0, 0, 0);
@@ -373,7 +421,13 @@ test('foto del brazo: cuentagotas → tono, recorte con lazo, colocar a X cm y m
       cv.dispatchEvent(
         new PointerEvent(t, { pointerId: id, clientX: px, clientY: py, pointerType: 'touch', bubbles: true }),
       );
+    const angPantalla = () => {
+      const a = window.__recorteEnPantalla(0, -2, 0),
+        b = window.__recorteEnPantalla(0, 2, 0);
+      return (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI;
+    };
     const a0 = window.__decals()[0].alto,
+      g0 = angPantalla(),
       r0 = window.__decals()[0].rot;
     ev('pointerdown', 11, x - 20, y);
     ev('pointerdown', 12, x + 20, y);
@@ -386,18 +440,59 @@ test('foto del brazo: cuentagotas → tono, recorte con lazo, colocar a X cm y m
     ev('pointerup', 11, x, y);
     ev('pointerup', 12, x, y);
     await new Promise(r => setTimeout(r, 300));
-    const d = window.__decals()[0];
-    return { escala: d.alto / a0, giro: d.rot - r0 };
+    const d = window.__decals()[0],
+      [x2, y2] = window.__recorteEnPantalla(0, 0, 0);
+    let pantalla = angPantalla() - g0;
+    pantalla -= 360 * Math.round(pantalla / 360);
+    return { escala: d.alto / a0, giro: d.rot - r0, pantalla, centro: Math.hypot(x2 - x, y2 - y) };
   });
+  console.log(
+    `e2e pellizco: dedos +15°, dibujo ${pin.pantalla.toFixed(1)}° en pantalla; escala ${pin.escala.toFixed(2)}; ` +
+      `el centro se movió ${pin.centro.toFixed(1)} px`,
+  );
   expect(pin.escala).toBeGreaterThan(1.3);
-  expect(Math.abs(pin.giro)).toBeGreaterThan(5);
+  expect(Math.abs(Math.abs(pin.giro) - 15)).toBeLessThan(1); // sobre la piel gira lo mismo que los dedos
+  // en la vista plana, del mismo lado; el ángulo exacto cambia algo porque la UV no conserva ángulos (10–25°)
+  expect(pin.pantalla).toBeGreaterThan(10);
+  expect(pin.pantalla).toBeLessThan(25);
+  expect(pin.centro).toBeLessThan(6); // el punto medio de los dedos no se movió: el recorte tampoco (H28)
   // 5) tono sólo para esta sesión (el siguiente cliente empieza con piel neutra)
   expect(await page.evaluate(() => sessionStorage.getItem('moldeador.tono'))).toBe(tono);
   expect(await page.evaluate(() => localStorage.getItem('moldeador.tono'))).toBe(null);
-  // 6) quitar el recorte libera su lienzo
+  // 6) quitar el recorte libera su lienzo (y el contexto WebGL) y el aviso de la versión nueva ya no habla de recortes
   await page.click('#decals .decal button[aria-label^="Quitar"]');
   await expect(page.locator('#decals .decal')).toHaveCount(0);
+  expect(await page.evaluate(() => document.getElementById('updWarn').hidden)).toBe(true);
   expect(errs).toEqual([]);
+});
+
+test('respaldo 2D (?nogl) y alto marcado a mano: mismas medidas de la tinta y marca roja', async ({ page }) => {
+  const errs = vigilarErrores(page);
+  await abrirFoto(page, '?debug&nogl');
+  await recortar(page, { marcar: true });
+  expect(await page.evaluate(() => window.__pintor())).toBe('2d');
+  await comprobarMedidas(page, '2d (?nogl)');
+  expect(errs).toEqual([]);
+});
+
+test('sangrado WebGL de 20 px: nada en triángulos ajenos, sí fuera de las islas', async ({ page, browserName }) => {
+  await abrirFoto(page, '?debug');
+  const gl2 = await hayWebGL2(page);
+  test.skip(!gl2 && browserName !== 'chromium', 'este navegador no da WebGL2');
+  expect(gl2).toBe(true);
+  await recortar(page);
+  const cost = await page.evaluate(() => window.__buscarCostura(0)); // el recorte cruza el borde de una isla UV
+  expect(cost.bordes).toBeGreaterThan(10);
+  await page.evaluate(() => window.__sangrado(20));
+  expect(await page.evaluate(() => window.__pintor())).toBe('webgl2');
+  const s = await page.evaluate(() => window.__sangradoInfo(0, 300));
+  console.log(
+    `e2e sangrado (${cost.ang}°, ${s.bordes} aristas de borde): ${s.pintados}/${s.n} triángulos ajenos pintados ` +
+      `(${s.cerca} a menos de 40 px, ${s.otrasIslas} de otras islas); sangrado fuera de las islas en ${s.sangrado}`,
+  );
+  expect(s.n).toBeGreaterThanOrEqual(200);
+  expect(s.pintados).toBe(0);
+  expect(s.sangrado).toBeGreaterThan(0);
 });
 
 test('foto JPEG con EXIF «girada 90°» (Orientation = 6): el editor la ve derecha', async ({ page }) => {

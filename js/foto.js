@@ -2,7 +2,7 @@
 //  - promedio robusto de color (cuentagotas)
 //  - borde suave de un recorte (desenfoque de la máscara)
 //  - carta de la superficie del brazo: (cm desde el hombro, cm alrededor del brazo) ↔ UV, para colocar tatuajes
-import { gauss1d, dot, cross, norm } from './core.js?v=9';
+import { gauss1d, dot, cross, norm } from './core.js?v=10';
 
 // ---------- color ----------
 export const hex = (r, g, b) => '#' + [r, g, b].map(x => Math.round(x).toString(16).padStart(2, '0')).join('');
@@ -91,6 +91,113 @@ export function blurAlpha(a, w, h, radius) {
 export const cutScale = (traceH, alto) => (traceH > 0 && alto > 0 ? alto / traceH : NaN);
 /** Alto en cm del trazo a partir de la calibración (cm por px de la foto). */
 export const altoFromCalib = (traceHsrc, cmPerPx) => (traceHsrc > 0 && cmPerPx > 0 ? traceHsrc * cmPerPx : NaN);
+
+// ---------- alto de la TINTA dentro del lazo (H9) ----------
+/** Mediana por canal [r, g, b] de los píxeles con mask ≥ 128 (o null si no hay). */
+export function medianColor(rgba, mask, w, h) {
+  const hist = [new Uint32Array(256), new Uint32Array(256), new Uint32Array(256)];
+  let n = 0;
+  for (let i = 0; i < w * h; i++) {
+    if (mask[i] < 128) continue;
+    for (let c = 0; c < 3; c++) hist[c][rgba[4 * i + c]]++;
+    n++;
+  }
+  if (!n) return null;
+  return hist.map(hc => {
+    let acc = 0;
+    for (let v = 0; v < 256; v++) {
+      acc += hc[v];
+      if (acc * 2 > n) return v;
+    }
+    return 255;
+  });
+}
+/**
+ * Filas (y columnas) de TINTA de un recorte: una fila es de tinta si más de `frac` de sus píxeles dentro del lazo
+ * (alpha ≥ 128) se alejan más de `thr` (distancia RGB) del tono de piel. Así el alto que escribe el tatuador (el de la
+ * tinta) no se aplica también al hueco que deja el dedo alrededor.
+ *   rgba: w×h RGBA; alpha: w×h (la máscara del lazo, sin borde suave);
+ *   skin: [r, g, b] o null (= mediana del borde interior del lazo).
+ * Las filas con muy pocos píxeles dentro del lazo (la punta del trazo) no cuentan, y hacen falta 2 filas seguidas
+ * (un pelo suelto no es tinta). Devuelve { top, bottom, left, right, skin } (px, inclusivos) o null si no se distingue.
+ */
+export function inkRows(rgba, alpha, w, h, skin, thr = 45, frac = 0.1) {
+  const inside = i => alpha[i] >= 128;
+  let tone = skin;
+  if (!tone) {
+    const edge = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (!inside(i)) continue;
+        const out = !x || !y || x === w - 1 || y === h - 1;
+        if (out || !inside(i - 1) || !inside(i + 1) || !inside(i - w) || !inside(i + w)) edge[i] = 255;
+      }
+    tone = medianColor(rgba, edge, w, h);
+  }
+  if (!tone) return null;
+  const t2 = thr * thr,
+    rowN = new Int32Array(h),
+    rowK = new Int32Array(h),
+    colN = new Int32Array(w),
+    colK = new Int32Array(w);
+  for (let y = 0; y < h; y++)
+    for (let x = 0; x < w; x++) {
+      const i = y * w + x;
+      if (!inside(i)) continue;
+      const dr = rgba[4 * i] - tone[0],
+        dg = rgba[4 * i + 1] - tone[1],
+        db = rgba[4 * i + 2] - tone[2];
+      rowN[y]++;
+      colN[x]++;
+      if (dr * dr + dg * dg + db * db > t2) {
+        rowK[y]++;
+        colK[x]++;
+      }
+    }
+  const span = (N, Kf) => {
+    let max = 0;
+    for (const v of N) max = Math.max(max, v);
+    const minN = Math.max(4, 0.05 * max),
+      ink = k => N[k] >= minN && Kf[k] > frac * N[k];
+    let a = -1,
+      b = -1;
+    for (let k = 0; k + 1 < N.length; k++)
+      if (ink(k) && ink(k + 1)) {
+        a = k;
+        break;
+      }
+    for (let k = N.length - 1; k > 0; k--)
+      if (ink(k) && ink(k - 1)) {
+        b = k;
+        break;
+      }
+    return a >= 0 && b >= a ? [a, b] : null;
+  };
+  const r = span(rowN, rowK),
+    c = span(colN, colK);
+  if (!r || !c) return null;
+  return { top: r[0], bottom: r[1], left: c[0], right: c[1], skin: tone };
+}
+
+// ---------- desenrollar la foto de un brazo curvo (H22) ----------
+// En la foto, lo que rodea parte del brazo se ve en cuerda (de borde a borde), no en arco sobre la piel. Con los bordes
+// del brazo a la altura del tatuaje (xc ± R, px de la foto) y una vista casi ortográfica, la columna x de la foto está
+// en el arco s = R·asin((x − xc)/R) sobre la piel.
+export const arcOfCol = (x, xc, R) => R * Math.asin(Math.max(-1, Math.min(1, (x - xc) / R)));
+export const colOfArc = (s, xc, R) => xc + R * Math.sin(Math.max(-1.5707, Math.min(1.5707, s / R)));
+/**
+ * Remuestreo por columnas para desenrollar [x0, x1] (px de la foto): columna X del recorte (k px por px de arco) ←
+ * columna sx[X] (continua) de la foto. xOf(x) lleva una x de la foto a la x del recorte (para la máscara del lazo).
+ */
+export function unrollCols(x0, x1, xc, R, k = 1) {
+  const s0 = arcOfCol(x0, xc, R),
+    s1 = arcOfCol(x1, xc, R),
+    w = Math.max(1, Math.round((s1 - s0) * k)),
+    sx = new Float64Array(w);
+  for (let X = 0; X < w; X++) sx[X] = colOfArc(s0 + (X + 0.5) / k, xc, R);
+  return { s0, s1, w, sx, xOf: x => (arcOfCol(x, xc, R) - s0) * k };
+}
 
 // ---------- carta de la superficie ----------
 // Lados del brazo: ángulo (grados) alrededor del eje, 0 = exterior (la línea donde se miden los largos).
@@ -200,11 +307,20 @@ export function surfaceChart(base, P, tape) {
     lo[k] = Math.min(lo[k], r);
     hi[k] = Math.max(hi[k], r);
   }
+  // umbral proporcional al grosor de la muñeca (en una muñeca gruesa la separación palma/dorso es mayor de por sí)
+  let rW = 0,
+    nW = 0;
+  for (let k = 0; k < 36; k++)
+    if (hi[jWR * 36 + k] > -1e8) {
+      rW += (hi[jWR * 36 + k] + lo[jWR * 36 + k]) / 2;
+      nW++;
+    }
+  const thr = Math.max(HAND_SPREAD, 0.25 * (nW ? rW / nW : 0));
   let jLo = jWR;
   for (let j = jWR; j >= sliceOf(sHand); j--) {
     let spread = 0;
     for (let k = 0; k < 36; k++) if (hi[j * 36 + k] > -1e8) spread = Math.max(spread, hi[j * 36 + k] - lo[j * 36 + k]);
-    if (spread > HAND_SPREAD) break;
+    if (spread > thr) break;
     jLo = j;
   }
   jLo += WIN; // los contornos de las últimas rodajas juntan vecinas que ya no son de una capa
@@ -390,10 +506,25 @@ export function surfaceChart(base, P, tape) {
     vL[i] = Lat(jf[i]);
   }
   // cinta ↔ rodaja: «Desde hombro» es la distancia por la línea exterior (Y a 0°), ajustada a la cinta de las medidas
-  const offs = [];
-  for (let i = 0; i < n; i++) if (valid[i] && Math.abs(phi[i]) < 0.08) offs.push(tape(sv[i]) - vY[i]);
+  // (por rodaja: en el hombro la cinta va por rodajas inclinadas y se separa unos mm de Y; así coinciden a 0°)
+  const offs = [],
+    offJ = Array.from({ length: jHi + 1 }, () => []);
+  for (let i = 0; i < n; i++)
+    if (valid[i] && Math.abs(phi[i]) < 0.08) {
+      const o = tape(sv[i]) - vY[i];
+      offs.push(o);
+      const j = Math.round(jf[i]);
+      if (j >= jLo && j <= jHi) offJ[j].push(o);
+    }
   const d0 = offs.length ? median(offs) : 0;
-  const dOfJ = x => d0 + Yat(x, 0);
+  const OW = 6; // ± rodajas (1,5 cm) para cada mediana
+  const off = new Float64Array(jHi + 1).fill(d0);
+  for (let j = jLo; j <= jHi; j++) {
+    const v = [];
+    for (let k = Math.max(jLo, j - OW); k <= Math.min(jHi, j + OW); k++) v.push(...offJ[k]);
+    if (v.length >= 3) off[j] = median(v);
+  }
+  const dOfJ = x => lerpJ(j => off[j], x) + Yat(x, 0);
   const dMin = dOfJ(jHi),
     dMax = dOfJ(jLo);
   // ángulo de la rodaja x en el que el arco (sin envolver) vale s
@@ -426,7 +557,16 @@ export function surfaceChart(base, P, tape) {
     }
     return (a + b) / 2;
   };
-  const jOfD = d => jOfY(d - d0, 0);
+  const jOfD = d => {
+    let a = jLo,
+      b = jHi;
+    for (let it = 0; it < 40; it++) {
+      const mid = (a + b) / 2;
+      if (dOfJ(mid) > d) a = mid;
+      else b = mid;
+    }
+    return (a + b) / 2;
+  };
   return {
     // por vértice
     jf,
@@ -454,18 +594,51 @@ export function surfaceChart(base, P, tape) {
 }
 
 /**
+ * Estrechamiento local del brazo (como un cono) en la rodaja jc y el lado th: radio de desarrollo rho0 (0 = sin
+ * corrección). Para bandas (W > L/3) es 0: cada fila sigue a la misma distancia del centro a lo largo de cada ángulo, y
+ * el borde recto de un brazalete queda como un anillo (delante y detrás a la misma altura).
+ */
+export function coneRho0(chart, jc, th, W = 0) {
+  if (W > chart.Lat(jc) / 3) return 0;
+  const dj = 8,
+    jA = Math.max(chart.jLo, jc - dj),
+    jB = Math.min(chart.jHi, jc + dj);
+  const dy = chart.Yat(jA, th) - chart.Yat(jB, th),
+    tau = dy > 0.5 ? (chart.Lat(jA) - chart.Lat(jB)) / dy / chart.Lat(jc) : 0;
+  return Math.abs(tau) > 1e-3 ? 1 / tau : 0;
+}
+/**
+ * Ida y vuelta del desarrollo del cono: (X, Y) sin corregir (arco en la propia rodaja, largo a lo largo del ángulo) ↔
+ * (x, y) del dibujo (filas como arcos concéntricos de radio rho0 + Y, sin cizalla en diagonal).
+ */
+export function coneMaps(rho0) {
+  const dev = (X, Y) => {
+    if (!rho0) return [X, Y];
+    const rho = rho0 + Y,
+      t = X / rho;
+    return Math.abs(t) < 1.5 ? [rho * Math.sin(t), rho * Math.cos(t) - rho0] : [X, Y];
+  };
+  const undev = (X, Y) => {
+    if (!rho0) return [X, Y];
+    const r = Math.sign(rho0) * Math.hypot(X, Y + rho0);
+    return [r * Math.atan2(X / r, (Y + rho0) / r), r - rho0];
+  };
+  return { dev, undev };
+}
+/**
  * Coordenadas (cm sobre la piel) de cada vértice en el marco de un tatuaje colocado:
  *   x hacia la derecha de la imagen (arco real alrededor del brazo), y hacia abajo (hacia la mano, longitud real a lo
  *   largo del brazo), origen en el centro del tatuaje, ya girado. Da la vuelta completa (360°): x ∈ [−L/2, L/2].
  * dec = { d: cm desde el hombro al centro (por la línea exterior), ang: grados alrededor del brazo (0 exterior),
- *         rot: grados de giro }
+ *         rot: grados de giro }; W: ancho del tatuaje en cm (para saber si es una banda; opcional).
+ * Devuelve también rx/ry (sin la corrección del cono ni el giro) y dev/undev (ida y vuelta de la corrección).
  */
-export function decalCoords(chart, dec) {
+export function decalCoords(chart, dec, W = 0) {
   const n = chart.valid.length,
     x = new Float32Array(n),
     y = new Float32Array(n),
-    ax = new Float32Array(n),
-    ay = new Float32Array(n),
+    rx = new Float32Array(n),
+    ry = new Float32Array(n),
     ok = chart.valid;
   const th = (dec.ang * Math.PI) / 180,
     rot = ((dec.rot || 0) * Math.PI) / 180,
@@ -477,12 +650,8 @@ export function decalCoords(chart, dec) {
     yc = new Float64Array(NT + 1);
   for (let k = 0; k <= NT; k++) yc[k] = chart.Yat(jc, -Math.PI + (k / NT) * TAU);
   // estrechamiento local del brazo (cono): las filas se desenrollan como arcos concéntricos, sin cizalla en diagonal
-  const dj = 8,
-    jA = Math.max(chart.jLo, jc - dj),
-    jB = Math.min(chart.jHi, jc + dj);
-  const dy = chart.Yat(jA, th) - chart.Yat(jB, th),
-    tau = dy > 0.5 ? (chart.Lat(jA) - chart.Lat(jB)) / dy / chart.Lat(jc) : 0;
-  const rho0 = Math.abs(tau) > 1e-3 ? 1 / tau : 0;
+  const rho0 = coneRho0(chart, jc, th, W),
+    { dev, undev } = coneMaps(rho0);
   const arcTh = new Map();
   for (let i = 0; i < n; i++) {
     if (!ok[i]) continue;
@@ -497,73 +666,93 @@ export function decalCoords(chart, dec) {
     const u = ((chart.phi[i] + Math.PI) / TAU) * NT,
       k = Math.min(NT - 1, Math.floor(u)),
       f = u - k;
-    let xx = chart.hand * ds,
-      yy = chart.vY[i] - (yc[k] * (1 - f) + yc[k + 1] * f);
+    const X = chart.hand * ds,
+      Y = chart.vY[i] - (yc[k] * (1 - f) + yc[k + 1] * f);
+    rx[i] = X;
+    ry[i] = Y;
+    let xx = X,
+      yy = Y;
     if (rho0) {
-      const rho = rho0 + yy,
-        t2 = xx / rho;
+      const rho = rho0 + Y,
+        t2 = X / rho;
       if (Math.abs(t2) < 1.5) {
         xx = rho * Math.sin(t2);
         yy = rho * Math.cos(t2) - rho0;
       }
     }
-    ax[i] = xx;
-    ay[i] = yy;
     x[i] = c * xx - s * yy;
     y[i] = s * xx + c * yy;
   }
-  return { x, y, ax, ay, c, s, ok, L: chart.vL };
+  return { x, y, rx, ry, c, s, ok, L: chart.vL, rho0, dev, undev };
 }
 
 /**
  * Triángulos UV que tocan el rectángulo del tatuaje (W×H cm, centrado):
- * [{ i: vértices, p: [[x,y]×3] en cm, q: [[u,v]×3] en UV (v hacia arriba) }]
- * Los triángulos de la «costura» del lado opuesto (x salta ±L) se emiten dos veces, desplazados, para la vuelta completa.
+ * [{ f: cara (índice en F), i: vértices, p: [[x,y]×3] en cm, q: [[u,v]×3] en UV (v hacia arriba), t: vértices UV }]
+ * Los triángulos de la «costura» del lado opuesto (x salta ±L) se emiten dos veces, desplazados, para la vuelta completa:
+ * el desplazamiento se hace en la x SIN corregir (arco de la propia rodaja) y la corrección del cono se aplica después.
  */
 export function decalTriangles(base, coords, W, H, margin = 0.5) {
   const F = base.F,
     FT = base.FT,
     VT = base.VT,
-    co = coords,
-    { x, y, ok, L } = coords,
+    { x, y, rx, ry, ok, L, dev } = coords,
+    cr = coords.c,
+    sr = coords.s,
     out = [];
   const hx = W / 2 + margin,
     hy = H / 2 + margin;
-  const push = (f, sh) => {
-    const v = [F[f], F[f + 1], F[f + 2]];
-    // sh[k]: desplazamiento (±L) del arco del vértice k, para la costura del lado opuesto
-    const pt = v.map((i, k) =>
-      sh[k] ? [co.c * (co.ax[i] + sh[k]) - co.s * co.ay[i], co.s * (co.ax[i] + sh[k]) + co.c * co.ay[i]] : [x[i], y[i]],
-    );
-    const xs = pt.map(q => q[0]),
-      ys = pt.map(q => q[1]);
-    if (Math.min(...xs) > hx || Math.max(...xs) < -hx || Math.min(...ys) > hy || Math.max(...ys) < -hy) return;
+  const emit = (f, pt) => {
     out.push({
-      i: v,
+      f,
+      i: [F[f], F[f + 1], F[f + 2]],
       p: pt,
       q: [0, 1, 2].map(k => [VT[2 * FT[f + k]], VT[2 * FT[f + k] + 1]]),
       t: [FT[f], FT[f + 1], FT[f + 2]],
     });
   };
-  const z = [0, 0, 0];
+  // costura del lado opuesto: sgn > 0 → los negativos pasan a +L; sgn < 0 → los positivos a −L (cada uno con su L)
+  const seam = (f, sgn) => {
+    const pt = [F[f], F[f + 1], F[f + 2]].map(i => {
+      let sh = 0;
+      if (sgn > 0 && rx[i] < 0) sh = L[i];
+      else if (sgn < 0 && rx[i] > 0) sh = -L[i];
+      if (!sh) return [x[i], y[i]];
+      const [xx, yy] = dev(rx[i] + sh, ry[i]);
+      return [cr * xx - sr * yy, sr * xx + cr * yy];
+    });
+    const xs = pt.map(q => q[0]),
+      ys = pt.map(q => q[1]);
+    if (Math.min(...xs) > hx || Math.max(...xs) < -hx || Math.min(...ys) > hy || Math.max(...ys) < -hy) return;
+    emit(f, pt);
+  };
   for (let f = 0; f < F.length; f += 3) {
     const a = F[f],
       b = F[f + 1],
       c = F[f + 2];
     if (!(ok[a] && ok[b] && ok[c])) continue;
-    const axs = [co.ax[a], co.ax[b], co.ax[c]],
-      Lm = (L[a] + L[b] + L[c]) / 3;
-    if (Math.max(...axs) - Math.min(...axs) > Lm / 2) {
-      // costura del lado opuesto: una copia con los negativos +L y otra con los positivos −L (vuelta completa)
-      push(
-        f,
-        axs.map(v => (v < 0 ? Lm : 0)),
-      );
-      push(
-        f,
-        axs.map(v => (v > 0 ? -Lm : 0)),
-      );
-    } else push(f, z);
+    const ra = rx[a],
+      rb = rx[b],
+      rc = rx[c];
+    if (Math.max(ra, rb, rc) - Math.min(ra, rb, rc) > (L[a] + L[b] + L[c]) / 6) {
+      seam(f, 1);
+      seam(f, -1);
+      continue;
+    }
+    // descarte rápido por caja, sólo con números (se ejecuta en cada fotograma del arrastre)
+    const xa = x[a],
+      xb = x[b],
+      xc = x[c];
+    if (Math.min(xa, xb, xc) > hx || Math.max(xa, xb, xc) < -hx) continue;
+    const ya = y[a],
+      yb = y[b],
+      yc = y[c];
+    if (Math.min(ya, yb, yc) > hy || Math.max(ya, yb, yc) < -hy) continue;
+    emit(f, [
+      [xa, ya],
+      [xb, yb],
+      [xc, yc],
+    ]);
   }
   return out;
 }
@@ -589,11 +778,58 @@ export const bary = (p, x, y) => {
   return [l0, l1, 1 - l0 - l1];
 };
 const inTri = l => l && Math.min(...l) >= -1e-6;
+// Rejilla en el marco del tatuaje (cm) sobre la lista de triángulos (H26): se guarda en la propia lista (tris._grid).
+// Cada celda guarda los índices en orden, así que se devuelve el mismo triángulo que una búsqueda lineal.
+function decalGrid(tris) {
+  if (tris._grid) return tris._grid;
+  let x0 = Infinity,
+    y0 = Infinity,
+    x1 = -Infinity,
+    y1 = -Infinity;
+  for (const t of tris)
+    for (const [px, py] of t.p) {
+      x0 = Math.min(x0, px);
+      x1 = Math.max(x1, px);
+      y0 = Math.min(y0, py);
+      y1 = Math.max(y1, py);
+    }
+  const G = Math.max(4, Math.min(96, Math.ceil(Math.sqrt(tris.length / 2)))),
+    cw = (x1 - x0) / G || 1,
+    ch = (y1 - y0) / G || 1,
+    cells = Array.from({ length: G * G }, () => []),
+    cell = (v, v0, s) => Math.min(G - 1, Math.max(0, Math.floor((v - v0) / s)));
+  tris.forEach((t, k) => {
+    const xs = t.p.map(q => q[0]),
+      ys = t.p.map(q => q[1]);
+    const c0 = cell(Math.min(...xs) - 1e-6, x0, cw),
+      c1 = cell(Math.max(...xs) + 1e-6, x0, cw),
+      r0 = cell(Math.min(...ys) - 1e-6, y0, ch),
+      r1 = cell(Math.max(...ys) + 1e-6, y0, ch);
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) cells[r * G + c].push(k);
+  });
+  const g = { x0, y0, x1, y1, cw, ch, G, cells, cell };
+  Object.defineProperty(tris, '_grid', { value: g, enumerable: false });
+  return g;
+}
 /** UV del punto (x, y) cm del marco del tatuaje (por defecto su centro), o null. También el triángulo y los pesos. */
 export function decalPointUV(tris, x = 0, y = 0) {
-  for (const t of tris) {
+  const hit = t => {
     const l = bary(t.p, x, y);
-    if (inTri(l)) return { uv: [0, 1].map(c => l[0] * t.q[0][c] + l[1] * t.q[1][c] + l[2] * t.q[2][c]), tri: t, l };
+    return inTri(l) ? { uv: [0, 1].map(c => l[0] * t.q[0][c] + l[1] * t.q[1][c] + l[2] * t.q[2][c]), tri: t, l } : null;
+  };
+  if (tris.length <= 32) {
+    for (const t of tris) {
+      const h = hit(t);
+      if (h) return h;
+    }
+    return null;
+  }
+  const g = decalGrid(tris),
+    e = 1e-6;
+  if (x < g.x0 - e || x > g.x1 + e || y < g.y0 - e || y > g.y1 + e) return null;
+  for (const k of g.cells[g.cell(y, g.y0, g.ch) * g.G + g.cell(x, g.x0, g.cw)]) {
+    const h = hit(tris[k]);
+    if (h) return h;
   }
   return null;
 }
@@ -693,16 +929,24 @@ export function pinchRot(tris, rot, dRot) {
 }
 /**
  * Nueva posición { d, ang } del recorte para que su punto (gx, gy) (cm en su marco, el que se agarró) quede bajo el
- * punto del brazo `at` = { jf, phi } (de uvLocator).
+ * punto del brazo `at` = { jf, phi } (de uvLocator). W: ancho del tatuaje en cm (el mismo que en decalCoords).
+ * Se deshace la corrección del cono (undev) del punto agarrado; como el cono depende de la posición nueva, se repite
+ * con el cono del sitio de destino (converge en 2–3 vueltas).
  */
-export function placeAt(chart, dec, gx, gy, at) {
+export function placeAt(chart, dec, gx, gy, at, W = 0) {
   const rot = ((dec.rot || 0) * Math.PI) / 180,
     c = Math.cos(-rot),
     s = Math.sin(-rot);
-  const xx = c * gx + s * gy,
-    yy = -s * gx + c * gy; // marco del brazo (x = hand·arco, y = hacia la mano)
-  const jc = chart.jOfY(chart.Yat(at.jf, at.phi) - yy, at.phi);
-  // el arco se mide en la rodaja de cada punto: la del dedo
-  const th = chart.phiOfArc(at.jf, chart.arcAt(at.jf, at.phi) - chart.hand * xx);
-  return { d: chart.dOfJ(jc), ang: (th * 180) / Math.PI };
+  const gxx = c * gx + s * gy,
+    gyy = -s * gx + c * gy; // marco del brazo sin girar (x = hand·arco, y = hacia la mano), con la corrección del cono
+  let pos = { d: dec.d, ang: dec.ang };
+  for (let it = 0; it < 3; it++) {
+    const th0 = (pos.ang * Math.PI) / 180,
+      [xx, yy] = coneMaps(coneRho0(chart, chart.jOfD(pos.d), th0, W)).undev(gxx, gyy);
+    const jc = chart.jOfY(chart.Yat(at.jf, at.phi) - yy, at.phi);
+    // el arco se mide en la rodaja de cada punto: la del dedo
+    const th = chart.phiOfArc(at.jf, chart.arcAt(at.jf, at.phi) - chart.hand * xx);
+    pos = { d: chart.dOfJ(jc), ang: (th * 180) / Math.PI };
+  }
+  return pos;
 }

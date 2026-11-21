@@ -1,6 +1,6 @@
 // Vista 2D: (a) textura plana con capas y guías, (b) siluetas ortográficas del brazo ajustado con medidas.
 // Zoom con pellizco / rueda, arrastrar para mover, doble toque para encajar.
-import { dot, cross, norm } from './core.js?v=9';
+import { dot, cross, norm } from './core.js?v=10';
 const PINK = '#ff3d9a',
   PINK_D = '#d81b72',
   HI = '#ffc400',
@@ -201,6 +201,15 @@ export class View2D {
       if (P.size === 1) {
         const editing = this.editHook && this.editHook.active();
         gesture = editing && this.editHook.grab(...toUV(xy(e))) ? 'decal' : 'view';
+      } else if (P.size === 2) {
+        // segundo dedo: el pellizco cuenta desde ya (no se pierde el primer movimiento)
+        const [a, b] = [...P.values()],
+          mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+        last = { dist: Math.hypot(a[0] - b[0], a[1] - b[1]), mid };
+        if (gesture === 'decal') {
+          last.ang = (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI;
+          this.editHook.hold(...toUV(mid)); // el recorte se mueve con el punto medio de los dedos
+        }
       }
     });
     cv.addEventListener('pointermove', e => {
@@ -215,13 +224,15 @@ export class View2D {
         else if (P.size === 2) {
           const [a, b] = [...P.values()],
             dist = Math.hypot(a[0] - b[0], a[1] - b[1]),
-            ang = (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI;
+            ang = (Math.atan2(b[1] - a[1], b[0] - a[0]) * 180) / Math.PI,
+            mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
           if (last && last.ang != null) {
             let dr = ang - last.ang;
             dr = ((dr + 540) % 360) - 180;
             this.editHook.pinch(dist / last.dist, dr);
+            this.editHook.dragTo(...toUV(mid)); // y se desplaza con el punto medio
           }
-          last = { dist, ang, mid: [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2] };
+          last = { dist, ang, mid };
         }
         return;
       }
@@ -254,7 +265,11 @@ export class View2D {
       if (!P.size) {
         if (gesture === 'decal' && this.editHook) this.editHook.end();
         gesture = null;
-      } else if (gesture === 'decal' && P.size === 1) this.editHook.grab(...toUV([...P.values()][0])); // tras el pellizco
+      } else if (gesture === 'decal' && P.size === 1 && !this.editHook.grab(...toUV([...P.values()][0]))) {
+        // tras el pellizco, el dedo que queda no está sobre un recorte: mueve la vista
+        this.editHook.end();
+        gesture = 'view';
+      }
       if (e.type !== 'pointerup' || P.size || moved > 10) return;
       const [x, y] = xy(e),
         now = performance.now();

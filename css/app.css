@@ -614,3 +614,30 @@ html.editing body {
 .decal .g-note:empty {
   display: none;
 }
+
+/* v10: qué alto se usa en el recorte (tinta / marcado) y avisos de «Desenrollar»; aviso fijo en iOS con recortes */
+.ed-panel .ed-info {
+  flex-basis: 100%;
+  margin: 0;
+}
+.ed-panel .ed-info:empty {
+  display: none;
+}
+.ed-panel button[aria-pressed='true'] {
+  background: var(--acc);
+  color: #1d1b1a;
+}
+.aviso-fijo {
+  position: fixed;
+  top: max(6px, env(safe-area-inset-top));
+  right: max(8px, env(safe-area-inset-right));
+  z-index: 15;
+  margin: 0;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(51, 48, 43, 0.92);
+  border: 1px solid #4a443d;
+  color: #f0c36b;
+  font-size: 11px;
+  pointer-events: none;
+}

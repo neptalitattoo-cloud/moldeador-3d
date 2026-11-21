@@ -2,15 +2,15 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-PMvZ3tl3nz8kkLoTtBU1fkgBvdiJAfi2316fw8N8GtE='; worker-src 'self'; img-src 'self' blob: data:; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-sZgK4p+3IJ8z3+Yd0xrjalG6yKkCtCmCYgcQPSqkfqI='; worker-src 'self'; img-src 'self' blob: data:; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#1d1b1a">
 <title>Moldeador 3D · medidas del cliente</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="css/app.css?v=9">
-<script type="importmap">{"imports":{"three":"./vendor/three.module.min.js?v=9","three/addons/OrbitControls.js":"./vendor/OrbitControls.js?v=9"}}</script>
+<link rel="stylesheet" href="css/app.css?v=10">
+<script type="importmap">{"imports":{"three":"./vendor/three.module.min.js?v=10","three/addons/OrbitControls.js":"./vendor/OrbitControls.js?v=10"}}</script>
 </head>
 <body>
 <header>
@@ -116,12 +116,16 @@
       <button type="button" id="edUsarTono" class="primary" disabled>Usar este tono</button>
     </div>
     <div data-p="lazo" hidden>
-      <span class="hint">Rodea el tatuaje con el dedo, bien pegado a él; al soltar se cierra.</span>
+      <span class="hint">Rodea el tatuaje con el dedo; al soltar se cierra. No hace falta ir pegado: el alto se aplica a la tinta (caja azul).</span>
       <label>Nombre <input type="text" id="edNombre" maxlength="30" placeholder="p. ej. rosa" autocomplete="off"></label>
-      <label>Alto del tatuaje (cm) <input type="text" id="edAlto" inputmode="decimal" autocomplete="off" placeholder="obligatorio" aria-describedby="edAltoAyuda"><small id="edAltoAyuda" class="hint">De arriba abajo de lo que rodeaste (sin el borde suave).</small></label>
+      <label>Alto del tatuaje (cm) <input type="text" id="edAlto" inputmode="decimal" autocomplete="off" placeholder="obligatorio" aria-describedby="edAltoAyuda"><small id="edAltoAyuda" class="hint">Alto de la tinta, de arriba abajo del dibujo (no del hueco que rodeaste).</small></label>
+      <button type="button" id="edMarcar" class="ghost" aria-pressed="false" title="Toca arriba y abajo de la tinta (o traza la línea): el alto escrito es esa distancia">📏 Marcar el alto</button>
+      <button type="button" id="edDesenrollar" class="ghost" aria-pressed="false" title="Toca el borde izquierdo y el derecho del brazo a la altura del tatuaje: el ancho sale como el arco sobre la piel">↔ Desenrollar</button>
+      <button type="button" id="edBrazoQuitar" class="ghost small" hidden>✕ Quitar desenrollar</button>
       <label>Borde suave <input type="range" id="edBorde" min="0" max="30" value="8"></label>
       <button type="button" id="edBorrar" class="ghost">Borrar trazo</button>
       <button type="button" id="edRecortar" class="primary" disabled>Añadir recorte</button>
+      <small id="edTinta" class="hint ed-info" aria-live="polite"></small>
     </div>
     <div data-p="medir" hidden>
       <span class="hint">Opcional: traza una línea entre dos puntos que conozcas (p. ej. punta del hombro → codo) y escribe cuánto mide.</span>
@@ -131,10 +135,11 @@
     <div data-p="mover" hidden><span class="hint">Arrastra para mover la foto; pellizca o usa la rueda para acercar. Con dos dedos también se mueve en cualquier herramienta.</span></div>
   </div>
 </div>
+<p id="avisoRecortes" class="aviso-fijo" role="note" hidden>Los recortes no se guardan al recargar</p>
 <div id="update" class="toast" role="status" aria-live="polite" hidden>
   Nueva versión del Moldeador disponible.<span id="updWarn" hidden> Al recargar se pierden la foto y los recortes.</span> <button type="button" id="updBtn" class="primary">Recargar</button>
   <button type="button" id="updLater" class="ghost">Luego</button>
 </div>
-<script type="module" src="js/app.js?v=9"></script>
+<script type="module" src="js/app.js?v=10"></script>
 </body>
 </html>

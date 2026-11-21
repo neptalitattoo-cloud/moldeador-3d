@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/OrbitControls.js';
-import { zipSync } from '../vendor/fflate.js?v=9';
-import * as K from './core.js?v=9';
-import { PARTS } from './parts.js?v=9';
-import { View2D } from './view2d.js?v=9';
-import { FotoEditor } from './editor.js?v=9';
-import * as FO from './foto.js?v=9';
-import { DecalGL } from './decalgl.js?v=9';
+import { zipSync } from '../vendor/fflate.js?v=10';
+import * as K from './core.js?v=10';
+import { PARTS } from './parts.js?v=10';
+import { View2D } from './view2d.js?v=10';
+import { FotoEditor } from './editor.js?v=10';
+import * as FO from './foto.js?v=10';
+import { DecalGL } from './decalgl.js?v=10';
 
 // ---------- entorno y utilidades ----------
 const $ = id => document.getElementById(id);
@@ -23,6 +23,7 @@ const MAX_PREVIEW = IS_IOS ? 2048 : 4096; // visor 3D y vista 2D
 const MAX_UPLOAD_PX = 8192,
   MAX_UPLOAD_MB = 50;
 const DEBUG = new URLSearchParams(location.search).has('debug');
+const NOGL = new URLSearchParams(location.search).has('nogl'); // fuerza el pintado 2D de respaldo (pruebas)
 const dbg = (k, v) => {
   if (DEBUG) window[k] = v;
 }; // variables de depuración sólo con ?debug
@@ -35,6 +36,7 @@ const fitSize = (w, h, max) => {
 };
 const tick = () => new Promise(r => setTimeout(r, 30));
 const BLEED = 6; // px de sangrado alrededor de las islas UV (a 2048 px)
+let bleedPx = BLEED; // (sólo las pruebas lo cambian, con ?debug)
 const SKIN_NEUTRAL = '#e3c2aa';
 const SKIN_KEY = 'moldeador.tono';
 let skinColor = SKIN_NEUTRAL; // tono de piel: neutro, del cuentagotas o del selector de color
@@ -291,22 +293,32 @@ let decals = [],
   chartCache = null,
   moving = null, // recorte que se está moviendo en la vista 2D
   dragging = false, // durante el arrastre no se recalculan las guías (fluidez)
-  decalGL; // undefined = sin probar, null = sin WebGL2 (dibujo 2D de respaldo)
+  decalGL, // undefined = sin probar, null = sin WebGL2 (dibujo 2D de respaldo)
+  glFails = 0, // fallos seguidos del pintado WebGL (contexto perdido, búfer reducido…)
+  glWarned = false;
+const CHART_ERR = '⚠ No se pudo medir la superficie de este brazo: los recortes de la foto no se pueden colocar.';
+// carta de la superficie del brazo; null si falla (no rompe el moldeado ni deja las descargas desactivadas)
 function chart() {
   const P = result ? result.P : base.V0;
   if (!chartCache || chartCache.P !== P) {
-    const tape = result ? result.report.tape : K.tapeFn(base, base.V0);
-    const c = FO.surfaceChart(base, P, tape);
-    chartCache = { P, c, loc: null };
+    chartCache = { P, c: null, loc: null, err: null };
+    try {
+      const tape = result ? result.report.tape : K.tapeFn(base, base.V0);
+      chartCache.c = FO.surfaceChart(base, P, tape);
+    } catch (e) {
+      console.warn(e);
+      chartCache.err = e;
+      status(CHART_ERR);
+    }
   }
   return chartCache.c;
 }
 function locator() {
-  chart();
+  if (!chart()) return () => null;
   if (!chartCache.loc) chartCache.loc = FO.uvLocator(base, chartCache.c);
   return chartCache.loc;
 }
-// el alto (cm) es el del trazo del lazo; el lienzo del recorte lleva además el margen del borde suave (H9)
+// el alto (cm) es el de la tinta (o el marcado); el lienzo del recorte lleva además el hueco del lazo y el borde suave
 const decalScale = dc => FO.cutScale(dc.traceH, dc.alto); // cm por px del lienzo
 const decalSize = dc => {
   const k = decalScale(dc);
@@ -314,6 +326,7 @@ const decalSize = dc => {
 };
 const clampD = d => {
   const c = chart();
+  if (!c) return Math.min(119, Math.max(0.5, d));
   return Math.min(c.dMax - 0.3, Math.max(Math.max(0.5, c.dMin + 0.3), d));
 };
 function decalTris(dc) {
@@ -321,18 +334,41 @@ function decalTris(dc) {
     [Wc, Hc] = decalSize(dc),
     key = [dc.d, dc.ang, dc.rot, Wc, Hc].join('|');
   if (dc._tris && dc._tris.P === P && dc._tris.key === key) return dc._tris.t;
-  const t = FO.decalTriangles(base, FO.decalCoords(chart(), dc), Wc, Hc);
-  dc._tris = { P, key, t };
+  const c = chart(),
+    t = c ? FO.decalTriangles(base, FO.decalCoords(c, dc, Wc), Wc, Hc) : [];
+  dc._tris = { P, key, t, outline: null };
   return t;
 }
+// WebGL2 para pintar los recortes. Si el contexto se pierde (iOS al volver de otra app) se crea uno nuevo en el
+// siguiente pintado; tras 3 fallos seguidos se queda en el dibujo 2D. Se avisa una vez al pasar al 2D.
 function getDecalGL() {
+  if (NOGL) return null;
+  if (decalGL && decalGL.lost) dropDecalGL();
   if (decalGL === undefined)
     try {
       decalGL = new DecalGL(base);
+      decalGL.onrestored = () => {
+        decalVer++; // el contexto vuelve: se repinta con una instancia nueva
+        paintTexture();
+      };
     } catch {
       decalGL = null;
     }
   return decalGL;
+}
+function dropDecalGL() {
+  if (decalGL) decalGL.dispose();
+  decalGL = undefined;
+}
+function glFailed(err) {
+  console.warn('WebGL de recortes no disponible; se usa el dibujo 2D.', err);
+  glFails++;
+  dropDecalGL();
+  if (glFails >= 3) decalGL = null;
+  if (!glWarned) {
+    glWarned = true;
+    status('⚠ El pintado rápido (WebGL) falló: los recortes se dibujan en 2D (pueden verse líneas en las costuras).');
+  }
 }
 // respaldo sin WebGL2: cada triángulo con su transformación en un canvas 2D
 function drawDecal2D(g, W, H, dc) {
@@ -380,19 +416,20 @@ function drawDecals(g, W, H) {
         const [Wc, Hc] = decalSize(dc);
         return { tris: decalTris(dc), img: dc.canvas, W: Wc, H: Hc };
       });
-      g.drawImage(gl.render(W, H, items, (BLEED * W) / 2048), 0, 0);
+      g.drawImage(gl.render(W, H, items, (bleedPx * W) / 2048), 0, 0);
+      glFails = 0;
       return;
     } catch (err) {
-      console.warn('WebGL de recortes no disponible; se usa el dibujo 2D.', err);
-      decalGL = null;
+      glFailed(err);
     }
   for (const dc of decals) drawDecal2D(g, W, H, dc);
 }
-// contorno de cada recorte (guía azul de tatuaje existente, en vez de anillos)
+// contorno de cada recorte (guía azul de tatuaje existente, en vez de anillos); se guarda con sus triángulos (H26)
 function decalOutline(dc) {
   const [Wc, Hc] = decalSize(dc),
-    tris = decalTris(dc),
-    segs = [],
+    tris = decalTris(dc);
+  if (dc._tris.outline) return dc._tris.outline;
+  const segs = [],
     N = 80;
   const corners = [
     [-Wc / 2, -Hc / 2],
@@ -412,6 +449,7 @@ function decalOutline(dc) {
       prev = cur;
     }
   }
+  dc._tris.outline = segs;
   return segs;
 }
 let decalRaf = 0;
@@ -425,12 +463,13 @@ function decalsChanged() {
 }
 function decalNote(dc) {
   const c = chart(),
-    [, Hc] = decalSize(dc),
-    out = dc.d + Hc / 2 > c.dMax + 0.2;
-  if (dc.noteEl)
-    dc.noteEl.textContent = out
-      ? `Llega a la mano: se corta a ${fmt1(c.dMax)} cm del hombro (dedos y palma aún no admiten recortes).`
-      : '';
+    [, Hc] = decalSize(dc);
+  if (!dc.noteEl) return;
+  let txt = '';
+  if (!c) txt = 'No se puede colocar en este modelo (no se pudo medir la superficie del brazo).';
+  else if (dc.d + Hc / 2 > c.dMax + 0.2)
+    txt = `Llega a la mano: se corta a ${fmt1(c.dMax)} cm del hombro (dedos y palma aún no admiten recortes).`;
+  if (dc.noteEl.textContent !== txt) dc.noteEl.textContent = txt; // aria-live: sólo si cambia
 }
 const fmt1 = v => (Math.round(v * 10) / 10).toString().replace('.', ',');
 const LADO_TXT = { exterior: 'Exterior', delante: 'Delante', interior: 'Interior', detras: 'Detrás' };
@@ -448,6 +487,7 @@ function addDecal({ canvas, name, alto, traceH }) {
   dc.d = Math.round(clampD(Math.max(alto / 2 + 4, 18)));
   decals.push(dc);
   renderDecalRow(dc);
+  decalsCount();
   decalsChanged();
   status(`Recorte «${dc.name}» añadido en el exterior del brazo: colócalo en «Foto del brazo».`);
   return dc;
@@ -456,9 +496,16 @@ function removeDecal(dc) {
   if (moving === dc) setMoving(null);
   decals = decals.filter(o => o !== dc);
   if (decalGL) decalGL.forget(dc.canvas);
+  if (!decals.length && decalGL) dropDecalGL(); // sin recortes se suelta el contexto WebGL (32–128 MB) (H27)
   release(dc.canvas, dc.thumb);
   dc.row.remove();
+  decalsCount();
   decalsChanged();
+}
+// recortes sí/no: aviso del banner de versión nueva y, en iOS (donde beforeunload no avisa), aviso fijo
+function decalsCount() {
+  $('updWarn').hidden = !decals.length;
+  $('avisoRecortes').hidden = !(IS_IOS && decals.length);
 }
 function renderDecalRow(dc) {
   const row = document.createElement('div');
@@ -556,6 +603,7 @@ function renderDecalRow(dc) {
     textContent: '✋ Mover en 2D',
   });
   mover.setAttribute('aria-pressed', 'false');
+  mover.setAttribute('aria-label', `Mover ${dc.name} en la vista 2D`);
   mover.onclick = () => setMoving(moving === dc ? null : dc);
   const x = Object.assign(document.createElement('button'), {
     type: 'button',
@@ -621,14 +669,23 @@ const decalEdit = {
     grab = null;
     return false;
   },
+  // pellizco: el punto del recorte bajo el punto medio de los dos dedos pasa a ser el agarrado (si no hay, no se mueve)
+  hold(u, v) {
+    const dc = grab ? grab.dc : moving;
+    if (!dc) return;
+    const p = FO.uvToDecal(decalTris(dc), u, v);
+    grab = p ? { dc, x: p[0], y: p[1] } : { dc, x: 0, y: 0, fixed: true };
+    dragging = true;
+  },
   dragTo(u, v) {
-    if (!grab) return;
+    if (!grab || grab.fixed) return;
     const at = locator()(u, v);
     if (!at) return; // fuera del brazo: se espera a que el dedo vuelva (sin perder la posición)
-    const pos = FO.placeAt(chart(), grab.dc, grab.x, grab.y, at);
+    const pos = FO.placeAt(chart(), grab.dc, grab.x, grab.y, at, decalSize(grab.dc)[0]);
     grab.dc.d = clampD(pos.d);
     grab.dc.ang = Math.round(pos.ang * 10) / 10;
     grab.dc.sync();
+    decalNote(grab.dc);
     decalsChanged();
   },
   pinch(scale, dRot) {
@@ -668,9 +725,17 @@ function resetTexture() {
     mesh.material.needsUpdate = true;
   }
 }
+let texDirty = false; // la textura del visor 3D está por rehacer (se rehace al volver al 3D)
 function paintTexture() {
   // vista previa = base + tatuaje + guías, a tamaño de vista previa
   if (!base) return;
+  if (mode2d) {
+    // en 2D la textura del visor 3D no se ve: sólo se rehace la vista 2D (al arrastrar, sin las guías) (H26)
+    texDirty = true;
+    if (v2d) v2d.invalidate(dragging ? 'texOnly' : 'tex');
+    return;
+  }
+  texDirty = false;
   const [W, H] = previewSize();
   if (!texCanvas) texCanvas = mkCanvas(W, H);
   const resized = texCanvas.width !== W || texCanvas.height !== H;
@@ -1132,7 +1197,7 @@ let workerInit = null;
 function startWorker(meta, buf) {
   workerInit = [meta, buf];
   try {
-    worker = new Worker(new URL('./fit-worker.js?v=9', import.meta.url), { type: 'module' });
+    worker = new Worker(new URL('./fit-worker.js?v=10', import.meta.url), { type: 'module' });
   } catch {
     worker = null;
     return;
@@ -1253,6 +1318,8 @@ async function run(ev) {
             ? 'Gira el modelo con dos dedos.'
             : 'Puedes girar el modelo con el ratón o el dedo.'),
     );
+    if (decals.length && !chart()) status(`${$('status').textContent} ${CHART_ERR}`);
+    decals.forEach(decalNote);
     if (innerWidth <= 820) $('vista').scrollIntoView({ behavior: 'smooth' });
   } catch (e) {
     if (e.message === 'cancelado') {
@@ -1481,7 +1548,10 @@ function set2D(on) {
     v2d._size();
     v2d.fit();
     v2d.draw();
-  } else requestRender();
+  } else {
+    if (texDirty) paintTexture();
+    requestRender();
+  }
 }
 function init2D() {
   v2d = new View2D($('viewer'), {
@@ -1545,7 +1615,9 @@ function init2D() {
   v2d.editHook = decalEdit;
   dbg('__v2d', v2d);
   dbg('__decals', () => decals);
-  dbg('__cmToUV', (d, ang) => FO.cmToUV(base, chart(), d, ang));
+  dbg('__cmToUV', (d, ang) => chart() && FO.cmToUV(base, chart(), d, ang));
+  // con qué se pintaron los recortes: 'webgl2' o '2d' (respaldo; también con ?nogl)
+  dbg('__pintor', () => (decalGL ? 'webgl2' : '2d'));
   // cámara mirando el brazo desde un lado (0 exterior, 90 delante) (para capturas y pruebas)
   dbg('__mirar', ang => {
     const m = base.meta,
@@ -1566,22 +1638,159 @@ function init2D() {
       y = Math.min(t.height - 1, Math.floor((1 - v) * t.height));
     return Array.from(t.getContext('2d').getImageData(x, y, 1, 1).data);
   });
-  // medida real (cm, sobre la malla ajustada) de lo PINTADO del recorte i: alfa ≥ 50 % en la capa del tatuaje
-  dbg('__medirRecorte', i => {
+  // medida real (cm, sobre la malla ajustada) de lo PINTADO del recorte i: alfa ≥ 50 % en la capa del tatuaje.
+  // op = { tinta: sólo píxeles oscuros (luminancia < 100: la tinta, no la piel que rodeó el lazo),
+  //        x: columna (cm del marco) donde se mide el alto, y: fila donde se mide el ancho }
+  dbg('__medirRecorte', (i, op = {}) => {
     const dc = decals[i],
       [Wc, Hc] = decalSize(dc),
       tris = decalTris(dc),
       P = result ? result.P : base.V0,
       t = getTattooLayer(),
-      px = t.getContext('2d').getImageData(0, 0, t.width, t.height).data;
+      px = t.getContext('2d').getImageData(0, 0, t.width, t.height).data,
+      x0 = op.x || 0,
+      y0 = op.y || 0;
     const keep = ([u, v]) => {
       const x = Math.min(t.width - 1, Math.floor(u * t.width)),
-        y = Math.min(t.height - 1, Math.floor((1 - v) * t.height));
-      return px[4 * (y * t.width + x) + 3] >= 128;
+        y = Math.min(t.height - 1, Math.floor((1 - v) * t.height)),
+        o = 4 * (y * t.width + x);
+      if (px[o + 3] < 128) return false;
+      return !op.tinta || 0.299 * px[o] + 0.587 * px[o + 1] + 0.114 * px[o + 2] < 100;
     };
     return {
-      ancho: FO.measureOnMesh(tris, P, -Wc / 2, 0, Wc / 2, 0, 600, keep),
-      alto: FO.measureOnMesh(tris, P, 0, -Hc / 2, 0, Hc / 2, 600, keep),
+      ancho: FO.measureOnMesh(tris, P, -Wc / 2, y0, Wc / 2, y0, 600, keep),
+      alto: FO.measureOnMesh(tris, P, x0, -Hc / 2, x0, Hc / 2, 600, keep),
+    };
+  });
+  // H23: sangrado más grande para las pruebas (px a 2048) y comprobación de que no pinta otras islas UV
+  dbg('__sangrado', px => {
+    bleedPx = px;
+    decalVer++;
+    paintTexture();
+  });
+  const uvTopo = () => {
+    // islas UV (componentes por vértices UV compartidos) y aristas de borde (de una sola cara)
+    const FT = base.FT,
+      nVT = base.meta.nVT,
+      par = Int32Array.from({ length: nVT }, (_, k) => k);
+    const find = a => {
+      while (par[a] !== a) a = par[a] = par[par[a]];
+      return a;
+    };
+    for (let f = 0; f < FT.length; f += 3) {
+      par[find(FT[f + 1])] = find(FT[f]);
+      par[find(FT[f + 2])] = find(FT[f]);
+    }
+    const cnt = new Map();
+    for (let f = 0; f < FT.length; f += 3)
+      for (let k = 0; k < 3; k++) {
+        const a = FT[f + k],
+          b = FT[f + ((k + 1) % 3)],
+          key = Math.min(a, b) * nVT + Math.max(a, b);
+        cnt.set(key, (cnt.get(key) || 0) + 1);
+      }
+    return { find, border: (a, b) => cnt.get(Math.min(a, b) * nVT + Math.max(a, b)) === 1 };
+  };
+  // aristas de borde de isla de los triángulos del recorte i que caen dentro de la elipse del dibujo
+  const bordesRecorte = (dc, topo) => {
+    const [Wc, Hc] = decalSize(dc),
+      out = [];
+    for (const t of decalTris(dc))
+      for (let k = 0; k < 3; k++) {
+        const k2 = (k + 1) % 3,
+          inside = p => (p[0] / (0.42 * Wc)) ** 2 + (p[1] / (0.42 * Hc)) ** 2 < 1;
+        if (topo.border(t.t[k], t.t[k2]) && inside(t.p[k]) && inside(t.p[k2])) out.push([t, k, k2]);
+      }
+    return out;
+  };
+  // gira el recorte i alrededor del brazo hasta que cruce el borde de una isla UV (una costura) por dentro del dibujo
+  dbg('__buscarCostura', i => {
+    const dc = decals[i],
+      topo = uvTopo();
+    let best = { ang: dc.ang, bordes: -1 };
+    for (let ang = -180; ang < 180; ang += 10) {
+      dc.ang = ang;
+      const n = bordesRecorte(dc, topo).length;
+      if (n > best.bordes) best = { ang, bordes: n };
+    }
+    dc.ang = best.ang;
+    dc.sync();
+    decalVer++;
+    paintTexture();
+    return best;
+  });
+  // los n centros de triángulos UV que NO son del recorte más cercanos a su sangrado: su alfa debe ser 0 (la plantilla
+  // protege las islas); y puntos a media distancia del sangrado, por fuera de las islas: allí sí debe haber tinta
+  dbg('__sangradoInfo', (i, n = 300) => {
+    const dc = decals[i],
+      topo = uvTopo(),
+      t = getTattooLayer(),
+      W = t.width,
+      H = t.height,
+      px = t.getContext('2d').getImageData(0, 0, W, H).data,
+      FT = base.FT,
+      VT = base.VT,
+      at = (u, v) => 4 * (Math.min(H - 1, Math.floor((1 - v) * H)) * W + Math.min(W - 1, Math.floor(u * W))),
+      tris = decalTris(dc),
+      mias = new Set(tris.map(q => q.f)),
+      bordes = bordesRecorte(dc, topo),
+      src = bordes.map(([q, k, k2]) => [((q.q[k][0] + q.q[k2][0]) / 2) * W, ((q.q[k][1] + q.q[k2][1]) / 2) * H]);
+    // máscara de las islas (todas las caras UV rellenas): qué píxeles están fuera de las islas
+    const m = mkCanvas(W, H),
+      mg = m.getContext('2d');
+    mg.beginPath();
+    for (let f = 0; f < FT.length; f += 3) {
+      mg.moveTo(VT[2 * FT[f]] * W, (1 - VT[2 * FT[f] + 1]) * H);
+      mg.lineTo(VT[2 * FT[f + 1]] * W, (1 - VT[2 * FT[f + 1] + 1]) * H);
+      mg.lineTo(VT[2 * FT[f + 2]] * W, (1 - VT[2 * FT[f + 2] + 1]) * H);
+      mg.closePath();
+    }
+    mg.fill();
+    const isla = mg.getImageData(0, 0, W, H).data;
+    release(m);
+    const cand = [],
+      len = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1]);
+    for (let f = 0; f < FT.length; f += 3) {
+      if (mias.has(f)) continue;
+      const [a, b, c] = [0, 1, 2].map(k => [VT[2 * FT[f + k]] * W, VT[2 * FT[f + k] + 1] * H]),
+        area2 = Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1]));
+      if (area2 / (len(a, b) + len(b, c) + len(c, a)) < 1.5) continue; // inradio ≥ 1,5 px: el píxel del centro es suyo
+      const g = [(a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3];
+      let dmin = Infinity;
+      for (const s of src) dmin = Math.min(dmin, len(g, s));
+      cand.push([dmin, g[0] / W, g[1] / H, topo.find(FT[f])]);
+    }
+    cand.sort((p, q) => p[0] - q[0]);
+    const usados = cand.slice(0, n),
+      islas = new Set(tris.map(q => topo.find(q.t[0]))),
+      bpx = (bleedPx * W) / 2048; // px del sangrado a este tamaño
+    let sangrado = 0;
+    for (const [q, k, k2] of bordes) {
+      // hacia fuera de la isla = lejos del tercer vértice
+      const a = q.q[k],
+        b = q.q[k2],
+        c = q.q[3 - k - k2];
+      let nx = -(b[1] - a[1]) * H,
+        ny = (b[0] - a[0]) * W;
+      const l = Math.hypot(nx, ny) || 1;
+      if (nx * (c[0] - a[0]) * W + ny * (c[1] - a[1]) * H > 0) {
+        nx = -nx;
+        ny = -ny;
+      }
+      // a 15, 30 y 50 % del sangrado (si otra isla queda muy cerca, alguno cae fuera de las dos)
+      const hay = [0.15, 0.3, 0.5].some(f => {
+        const o = at((a[0] + b[0]) / 2 + ((nx / l) * f * bpx) / W, (a[1] + b[1]) / 2 + ((ny / l) * f * bpx) / H);
+        return !isla[o + 3] && px[o + 3] > 0;
+      });
+      if (hay) sangrado++;
+    }
+    return {
+      bordes: bordes.length,
+      n: usados.length,
+      cerca: usados.filter(p => p[0] < 2 * bleedPx).length,
+      otrasIslas: usados.filter(p => !islas.has(p[3])).length,
+      pintados: usados.filter(p => px[at(p[1], p[2]) + 3] > 0).length,
+      sangrado,
     };
   });
   // color pintado en el punto (x, y) cm del marco del recorte i (x → derecha del dibujo, y → abajo)
@@ -1692,8 +1901,11 @@ function wireFoto() {
     }
   });
   // aviso al salir/recargar con recortes (no se guardan)
+  // (Safari de escritorio necesita returnValue; Safari de iOS no avisa nunca: ahí está el aviso fijo #avisoRecortes)
   addEventListener('beforeunload', e => {
-    if (decals.length && !reloadingForUpdate) e.preventDefault();
+    if (!decals.length || reloadingForUpdate) return;
+    e.preventDefault();
+    e.returnValue = '';
   });
   $('tono').addEventListener('input', () => setSkin($('tono').value));
   $('tonoReset').onclick = () => setSkin(SKIN_NEUTRAL);
@@ -1755,7 +1967,7 @@ async function initSW() {
   const reg = await navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' }).catch(() => null);
   if (!reg) return;
   const offer = w => {
-    $('updWarn').hidden = !decals.length;
+    decalsCount(); // «se pierden los recortes»: también se actualiza al añadir o quitar recortes
     $('update').hidden = false;
     $('updBtn').onclick = () => {
       accepted = true;

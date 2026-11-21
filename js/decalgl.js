@@ -22,7 +22,7 @@ export class DecalGL {
     const gl = this.canvas.getContext('webgl2', {
       alpha: true,
       premultipliedAlpha: true,
-      preserveDrawingBuffer: true,
+      preserveDrawingBuffer: false, // el resultado se copia al lienzo 2D en el mismo turno (H27)
       antialias: false,
       stencil: true,
       depth: false,
@@ -30,9 +30,15 @@ export class DecalGL {
     if (!gl) throw new Error('sin WebGL2');
     this.gl = gl;
     this.lost = false;
+    this.onrestored = null;
+    // contexto perdido (iOS al pasar a otra app, falta de memoria): esta instancia ya no vale; al recuperarse, app.js
+    // crea una nueva (los programas, búferes y texturas del contexto viejo no sobreviven)
     this.canvas.addEventListener('webglcontextlost', e => {
       e.preventDefault();
       this.lost = true;
+    });
+    this.canvas.addEventListener('webglcontextrestored', () => {
+      if (this.onrestored) this.onrestored();
     });
     const sh = (type, src) => {
       const s = gl.createShader(type);
@@ -109,6 +115,9 @@ export class DecalGL {
       this.canvas.width = Wpx;
       this.canvas.height = Hpx;
     }
+    // el navegador puede crear un búfer más pequeño de lo pedido (memoria en iOS): los tatuajes caerían en otro sitio
+    if (gl.drawingBufferWidth !== Wpx || gl.drawingBufferHeight !== Hpx)
+      throw new Error(`búfer WebGL reducido (${gl.drawingBufferWidth}×${gl.drawingBufferHeight} de ${Wpx}×${Hpx})`);
     gl.viewport(0, 0, Wpx, Hpx);
     gl.clearColor(0, 0, 0, 0);
     gl.clearStencil(0);
@@ -124,7 +133,9 @@ export class DecalGL {
     gl.enableVertexAttribArray(this.aUV);
     gl.vertexAttribPointer(this.aUV, 2, gl.FLOAT, false, 16, 0);
     gl.disableVertexAttribArray(this.aTC);
-    gl.vertexAttrib2f(this.aTC, -1, -1); // fuera del recorte: se descarta
+    // dentro de [0, 1]: el shader no descarta (discard anularía también la escritura de la plantilla, H23); el color no
+    // se escribe porque colorMask está a false
+    gl.vertexAttrib2f(this.aTC, 0.5, 0.5);
     gl.drawArrays(gl.TRIANGLES, 0, this.nIsl);
     gl.colorMask(true, true, true, true);
     gl.enable(gl.BLEND);
@@ -198,8 +209,14 @@ export class DecalGL {
     return this.canvas;
   }
   dispose() {
-    const ext = this.gl.getExtension('WEBGL_lose_context');
-    if (ext) ext.loseContext();
+    this.onrestored = null;
+    this.lost = true;
+    try {
+      const ext = this.gl.getExtension('WEBGL_lose_context');
+      if (ext && !this.gl.isContextLost()) ext.loseContext();
+    } catch {
+      // contexto ya perdido: no hay nada que soltar
+    }
     this.canvas.width = this.canvas.height = 1;
   }
 }
