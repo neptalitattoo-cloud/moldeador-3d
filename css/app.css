@@ -336,6 +336,12 @@ canvas.v2d {
 .gl[hidden] {
   display: none;
 }
+.sub {
+  display: block;
+  font-size: 11px;
+  line-height: 1.2;
+  margin-top: -3px;
+}
 .help {
   color: var(--mut);
   font-size: 11px;

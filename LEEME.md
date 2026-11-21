@@ -74,3 +74,8 @@ Arrastra para mover, pellizca o usa la rueda para hacer zoom y toca dos veces pa
 
 ## v11 (arreglo tras la revisión)
 - **iPhone**: el panel de «Recortar» (más alto desde la v10) ya no tapa la foto: el panel se desplaza y deja al menos la mitad de la pantalla a la foto, y la foto se vuelve a encajar cuando cambia el panel (nunca a mitad de un trazo, y no si tú has hecho zoom).
+
+## v12 (distancias desde el hombro más claras)
+- **Tatuajes existentes** son solo guías: dibujan dos anillos azules, en «Desde hombro (borde de arriba)» y en borde + «Largo (hacia la muñeca)». El campo que antes se llamaba «Ancho» siempre fue ese largo a lo largo del brazo (los datos guardados y los enlaces no cambian). No colocan ningún dibujo.
+- **Foto del brazo**: en cada recorte «Desde hombro» es el **centro** del tatuaje y «Alto» lo que mide de arriba abajo. Un recorte con centro en 43,5 y alto 15 cae justo entre los anillos de un tatuaje existente con borde 36 y largo 15.
+- Todas las distancias se miden por la cara externa del brazo desde la punta del hombro.

@@ -2,15 +2,15 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-0xa6ZPOYmz9xv1/pGG6Dcaz5VZVB5I22iemlEkGWQbk='; worker-src 'self'; img-src 'self' blob: data:; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-KpIRUNxmSEJWA7ux5Z7NhkWtnoWrY17zowmVqmwXkMs='; worker-src 'self'; img-src 'self' blob: data:; style-src 'self'; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="theme-color" content="#1d1b1a">
 <title>Moldeador 3D · medidas del cliente</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
-<link rel="stylesheet" href="css/app.css?v=11">
-<script type="importmap">{"imports":{"three":"./vendor/three.module.min.js?v=11","three/addons/OrbitControls.js":"./vendor/OrbitControls.js?v=11"}}</script>
+<link rel="stylesheet" href="css/app.css?v=12">
+<script type="importmap">{"imports":{"three":"./vendor/three.module.min.js?v=12","three/addons/OrbitControls.js":"./vendor/OrbitControls.js?v=12"}}</script>
 </head>
 <body>
 <header>
@@ -28,7 +28,8 @@
       <fieldset><legend>Largos (cm)</legend><div id="largos" class="grid"></div>
         <p class="hint">Medidos por la cara externa del brazo desde la punta del hombro.</p></fieldset>
       <fieldset><legend>Contornos (cm)</legend><div id="contornos" class="grid"></div></fieldset>
-      <fieldset><legend>Tatuajes existentes <small>(distancia desde el hombro)</small></legend>
+      <fieldset><legend>Tatuajes existentes <small>(guías)</small></legend>
+        <p class="hint">Solo dibuja dos anillos azules de guía: el borde de arriba y el de abajo (borde + largo), medidos por la cara externa del brazo desde la punta del hombro. Para colocar el tatuaje real usa «Foto del brazo»; allí «Desde hombro» es el centro.</p>
         <div id="tatuajes"></div>
         <button type="button" id="addTat" class="ghost">+ Añadir tatuaje</button>
         <label class="check"><input type="checkbox" id="verGuias" checked> Ver guías en el 3D</label>
@@ -51,6 +52,7 @@
           <span id="tonoHex" class="hint">#e3c2aa (neutro)</span>
           <button type="button" id="tonoReset" class="ghost small">Piel neutra</button>
         </div>
+        <p class="hint" id="decalsAyuda">En cada recorte: «Desde hombro» = centro del tatuaje; «Alto» = de arriba abajo.</p>
         <div id="decals"></div>
         <label class="check"><input type="checkbox" id="fundirTat"> Fundir los tatuajes en la capa base del USDZ/OBJ (si no, van solo en el PNG de tatuaje)</label>
       </fieldset>
@@ -140,6 +142,6 @@
   Nueva versión del Moldeador disponible.<span id="updWarn" hidden> Al recargar se pierden la foto y los recortes.</span> <button type="button" id="updBtn" class="primary">Recargar</button>
   <button type="button" id="updLater" class="ghost">Luego</button>
 </div>
-<script type="module" src="js/app.js?v=11"></script>
+<script type="module" src="js/app.js?v=12"></script>
 </body>
 </html>

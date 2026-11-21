@@ -2,7 +2,7 @@
 //  - promedio robusto de color (cuentagotas)
 //  - borde suave de un recorte (desenfoque de la máscara)
 //  - carta de la superficie del brazo: (cm desde el hombro, cm alrededor del brazo) ↔ UV, para colocar tatuajes
-import { gauss1d, dot, cross, norm } from './core.js?v=11';
+import { gauss1d, dot, cross, norm } from './core.js?v=12';
 
 // ---------- color ----------
 export const hex = (r, g, b) => '#' + [r, g, b].map(x => Math.round(x).toString(16).padStart(2, '0')).join('');

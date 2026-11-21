@@ -1,6 +1,6 @@
 // Vista 2D: (a) textura plana con capas y guías, (b) siluetas ortográficas del brazo ajustado con medidas.
 // Zoom con pellizco / rueda, arrastrar para mover, doble toque para encajar.
-import { dot, cross, norm } from './core.js?v=11';
+import { dot, cross, norm } from './core.js?v=12';
 const PINK = '#ff3d9a',
   PINK_D = '#d81b72',
   HI = '#ffc400',

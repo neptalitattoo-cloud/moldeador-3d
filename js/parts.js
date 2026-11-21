@@ -4,7 +4,7 @@ export const PARTS = {
   brazo_derecho: {
     nombre: 'Brazo derecho',
     data: 'data/brazo_derecho',
-    version: '?v=11',
+    version: '?v=12',
     activo: true,
     largos: [
       ['hombro_codo', '1. Hombro → codo', 32],

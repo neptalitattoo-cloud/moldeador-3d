@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/OrbitControls.js';
-import { zipSync } from '../vendor/fflate.js?v=11';
-import * as K from './core.js?v=11';
-import { PARTS } from './parts.js?v=11';
-import { View2D } from './view2d.js?v=11';
-import { FotoEditor } from './editor.js?v=11';
-import * as FO from './foto.js?v=11';
-import { DecalGL } from './decalgl.js?v=11';
+import { zipSync } from '../vendor/fflate.js?v=12';
+import * as K from './core.js?v=12';
+import { PARTS } from './parts.js?v=12';
+import { View2D } from './view2d.js?v=12';
+import { FotoEditor } from './editor.js?v=12';
+import * as FO from './foto.js?v=12';
+import { DecalGL } from './decalgl.js?v=12';
 
 // ---------- entorno y utilidades ----------
 const $ = id => document.getElementById(id);
@@ -134,9 +134,10 @@ function loadExample() {
 function addTat(n, d, w) {
   const div = document.createElement('div');
   div.className = 'tat';
-  const field = (lab, cls, val, numeric) => {
+  const field = (lab, cls, val, numeric, sub) => {
     const l = document.createElement('label');
     l.append(lab);
+    if (sub) l.append(Object.assign(document.createElement('small'), { className: 'sub', textContent: sub }));
     const i = document.createElement('input');
     i.className = cls;
     i.value = val;
@@ -162,8 +163,8 @@ function addTat(n, d, w) {
   };
   div.append(
     field('Nombre', 'tn', n, false),
-    field('Desde hombro', 'td', d, true),
-    field('Ancho (opc.)', 'tw', w, true),
+    field('Desde hombro', 'td', d, true, 'borde de arriba, cm'),
+    field('Largo (opc.)', 'tw', w, true, 'hacia la muñeca, cm'),
     x,
   );
   $('tatuajes').appendChild(div);
@@ -177,7 +178,8 @@ function tattoos() {
     }))
     .filter(t => Number.isFinite(t.d) && t.d > 0 && t.d < 120)
     .concat(decals.map(dc => ({ n: dc.name, d: Math.max(0.1, dc.d - dc.alto / 2), w: dc.alto, foto: true })));
-  // (para los recortes, d es el borde de arriba del tatuaje y w su alto)
+  // (en «Tatuajes existentes» d es el borde de arriba y w el largo hacia la muñeca; para los
+  // recortes se pasa igual: borde de arriba = centro − alto/2 y w = alto)
 }
 function readInputs() {
   const raw = {},
@@ -523,10 +525,12 @@ function renderDecalRow(dc) {
     dc.canvas.width * k,
     dc.canvas.height * k,
   );
-  const lab = (txt, el, cls) => {
+  const lab = (txt, el, cls, sub) => {
     const l = document.createElement('label');
     if (cls) l.className = cls;
-    l.append(txt, el);
+    l.append(txt);
+    if (sub) l.append(Object.assign(document.createElement('small'), { className: 'sub', textContent: sub }));
+    l.append(el);
     return l;
   };
   const numIn = (val, cls, onv) => {
@@ -619,8 +623,8 @@ function renderDecalRow(dc) {
     th,
     lab('Nombre', nameIn, 'g-nm'),
     x,
-    lab('Desde hombro (centro, cm)', dIn, 'g-dd'),
-    lab('Alto (cm)', aIn, 'g-al'),
+    lab('Desde hombro', dIn, 'g-dd', 'centro del tatuaje, cm'),
+    lab('Alto', aIn, 'g-al', 'de arriba abajo, cm'),
     lab('Lado', lado, 'g-ld'),
     mover,
     lab('Ángulo alrededor del brazo', ang, 'g-ang'),
@@ -1177,7 +1181,7 @@ function showTable(rep, warn) {
     .map(
       t =>
         `${t.n || 'tatuaje'} a ${fmt1(t.d)} cm` +
-        (Number.isFinite(t.w) && t.w > 0 ? ` (${t.foto ? 'alto' : 'ancho'} ${fmt1(t.w)} cm)` : ''),
+        (Number.isFinite(t.w) && t.w > 0 ? ` (${t.foto ? 'alto' : 'largo'} ${fmt1(t.w)} cm)` : ''),
     )
     .join(' · ');
   const ex = $('extra');
@@ -1197,7 +1201,7 @@ let workerInit = null;
 function startWorker(meta, buf) {
   workerInit = [meta, buf];
   try {
-    worker = new Worker(new URL('./fit-worker.js?v=11', import.meta.url), { type: 'module' });
+    worker = new Worker(new URL('./fit-worker.js?v=12', import.meta.url), { type: 'module' });
   } catch {
     worker = null;
     return;

@@ -11,7 +11,7 @@ import {
   rgbOf,
   arcOfCol,
   unrollCols,
-} from './foto.js?v=11';
+} from './foto.js?v=12';
 
 const $ = id => document.getElementById(id);
 const MAX_PHOTO = 2048; // px del lado mayor (memoria en iOS)

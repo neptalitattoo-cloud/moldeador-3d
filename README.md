@@ -4,6 +4,7 @@ Static web tool (Spanish UI) that reshapes a 3D right arm to a client's measurem
 
 - Enter the measurements (cm) → **Moldear** → download **USDZ** (Y up, cm) or **OBJ + MTL + PNG**.
 - Skin base layer is painted only inside the arm/hand UV islands (transparent outside).
+- «Tatuajes existentes» are guide rings only: «Desde hombro (borde de arriba)» is the tattoo's top edge and «Largo (hacia la muñeca)» its length along the arm (this field was labelled «Ancho» before v12; saved data and URLs keep the same meaning), so the two blue rings sit at top and top + length. Photo cut-outs use the tattoo's centre instead (see below).
 - Tattoo layer, tattoo-marker guides and measurement guides are exported as separate PNG layers (Procreate imports one base layer per model).
 - **📏 Mostrar guías de medición**: pink rings/lines on the 3D preview showing where each field is measured; focusing a field highlights its guide.
 - **🗺️ Ver en 2D**: flat UV texture view (skin + tattoo layer + guides + UV island outlines) or orthographic silhouettes of the fitted arm (outer/front/inner/back) with numbered measurements in cm and a 10 cm scale bar; pinch/drag zoom and pan; «Descargar PNG 2D» exports the current 2D view in high resolution.
